@@ -454,33 +454,68 @@ async function generateAPP_PDF(targetYear = null) {
     const totalBudget = appItems.reduce((sum, item) => sum + parseBudget(item.budget), 0);
     const formattedTotal = totalBudget.toLocaleString('en-PH', { minimumFractionDigits: 2 });
 
-    // 5. Data Rows
-    const tableBody = [
-        // Category grouping header (as seen in screenshot: "General Requirements")
-        [
-            { content: 'General Requirements', colSpan: 12, styles: { fontStyle: 'bold', fillColor: [245, 245, 245] } }
-        ]
-    ];
-
-    appItems.forEach(item => {
+    // Helper to format an item row
+    function formatAppRow(item) {
         const itemBudget = parseBudget(item.budget).toLocaleString('en-PH', { minimumFractionDigits: 2 });
         const strategies = Array.isArray(item.strategies) ? item.strategies.join('\n') : (item.strategies || '');
 
-        tableBody.push([
-            item.project_description || item.project_type || 'N/A',     // Col 1: Project Title
-            item.end_user || 'N/A',                                     // Col 2: End-User
-            item.quantity_size ? `${item.project_description} (${item.quantity_size})` : (item.project_description || ''), // Col 3: Description
-            item.mode || 'N/A',                                         // Col 4: Mode of Procurement
-            item.pre_procurement || 'No',                               // Col 5: Early Procurement (Yes/No)
-            item.bid_evaluation_criteria || 'N/A',                       // Col 6: Criteria
-            item.start_date || '',                                      // Col 7: Start Date
-            item.end_date || '',                                        // Col 8: End Date
-            item.fund_source || 'N/A',                                  // Col 9: Source of Fund
-            `P ${itemBudget}`,                                          // Col 10: Budget (PhP)
-            strategies,                                                 // Col 11: Strategies
-            item.remarks || ''                                          // Col 12: Remarks
-        ]);
-    });
+        return [
+            item.project_description || item.project_type || 'N/A',
+            item.end_user || 'N/A',
+            item.quantity_size ? `${item.project_description} (${item.quantity_size})` : (item.project_description || ''),
+            item.mode || 'N/A',
+            item.pre_procurement || 'No',
+            item.bid_evaluation_criteria || 'N/A',
+            item.start_date || '',
+            item.end_date || '',
+            item.fund_source || 'N/A',
+            `P ${itemBudget}`,
+            strategies,
+            item.remarks || ''
+        ];
+    }
+
+    // Separate Direct Acquisition from General items
+    const isDirectAcquisition = (item) => String(item.mode || '').trim().toLowerCase().includes('direct acquisition');
+    const generalItems = appItems.filter(item => !isDirectAcquisition(item));
+    const directAcquisitionItems = appItems.filter(item => isDirectAcquisition(item));
+
+    // 5. Data Rows
+    const tableBody = [];
+
+    // --- Section 1: General Requirements ---
+    tableBody.push([
+        {
+            content: 'General Requirements',
+            colSpan: 12,
+            styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' }
+        }
+    ]);
+
+    if (generalItems.length > 0) {
+        generalItems.forEach(item => {
+            tableBody.push(formatAppRow(item));
+        });
+    } else {
+        tableBody.push(['', '', '', '', '', '', '', '', '', '', '', '']);
+    }
+
+    // --- Section 2: Miscellaneous Items (for Direct Acquisition only) Sec 32.2 of RA No. 12009 ---
+    tableBody.push([
+        {
+            content: 'Miscellaneous Items (for Direct Acquisition only) Sec 32.2 of RA No. 12009',
+            colSpan: 12,
+            styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' }
+        }
+    ]);
+
+    if (directAcquisitionItems.length > 0) {
+        directAcquisitionItems.forEach(item => {
+            tableBody.push(formatAppRow(item));
+        });
+    } else {
+        tableBody.push(['', '', '', '', '', '', '', '', '', '', '', '']);
+    }
 
     // Total Budget Row
     tableBody.push([
@@ -511,7 +546,7 @@ async function generateAPP_PDF(targetYear = null) {
     colWeights.forEach((w, idx) => {
         columnStyles[idx] = { cellWidth: (usableWidth * w) / totalWeights };
     });
-    columnStyles[9].halign = 'right'; // Budget column right aligned
+    columnStyles[9].halign = 'right';
 
     doc.autoTable({
         startY: currentY,
@@ -553,42 +588,32 @@ async function generateAPP_PDF(targetYear = null) {
     doc.setFontSize(7);
     
     // Left: Prepared by
-    doc.text('Prepared by / Submitted by:', margin, finalY);
+    doc.text('Supply Officer II, DICT X', margin, finalY);
     doc.line(margin, finalY + 10, margin + 60, finalY + 10);
     doc.setFont('helvetica', 'bold');
-    doc.text('JAYMARK D. DUMIO', margin + 30, finalY + 14, { align: 'center' });
+    doc.text('Name', margin + 30, finalY + 14, { align: 'center' });
     doc.setFont('helvetica', 'normal');
     doc.text('Signature over Printed Name', margin + 30, finalY + 18, { align: 'center' });
-    doc.text('BAC Secretariat / Focal Person', margin + 30, finalY + 22, { align: 'center' });
+    doc.text('Bids and Awards Committee Secretariat', margin + 30, finalY + 22, { align: 'center' });
     doc.text('Date: ' + new Date().toLocaleDateString(), margin + 30, finalY + 28, { align: 'center' });
 
     // Center: Certified Funds Available
-    doc.text('Certified Funds Available:', pageWidth / 2 - 30, finalY);
+    doc.text('Assistant Regional Director, DICT X', pageWidth / 2 - 30, finalY);
     doc.line(pageWidth / 2 - 35, finalY + 10, pageWidth / 2 + 25, finalY + 10);
     doc.setFont('helvetica', 'bold');
-    doc.text('BRYAN JOHN M. SABLAS', pageWidth / 2 - 5, finalY + 14, { align: 'center' });
+    doc.text('Name', pageWidth / 2 - 5, finalY + 14, { align: 'center' });
     doc.setFont('helvetica', 'normal');
     doc.text('Signature over Printed Name', pageWidth / 2 - 5, finalY + 18, { align: 'center' });
-    doc.text('Budget Officer II', pageWidth / 2 - 5, finalY + 22, { align: 'center' });
+    doc.text('Bids and Awards Committee Chairperson', pageWidth / 2 - 5, finalY + 22, { align: 'center' });
 
     // Right: Approved by
-    doc.text('Approved by:', pageWidth - 70, finalY);
+    doc.text('Regional Director, DICT X', pageWidth - 70, finalY);
     doc.line(pageWidth - 70, finalY + 10, pageWidth - margin, finalY + 10);
     doc.setFont('helvetica', 'bold');
-    doc.text('SITTIE RAHMA V. ALAWI, MTM, CSSGB', pageWidth - 35, finalY + 14, { align: 'center' });
+    doc.text('Name', pageWidth - 35, finalY + 14, { align: 'center' });
     doc.setFont('helvetica', 'normal');
     doc.text('Signature over Printed Name', pageWidth - 35, finalY + 18, { align: 'center' });
-    doc.text('Regional Director, DICT X', pageWidth - 35, finalY + 22, { align: 'center' });
-
-    // Endorsed by (Bottom left)
-    const endorseY = finalY + 36;
-    doc.text('Endorsed by:', margin, endorseY);
-    doc.line(margin, endorseY + 10, margin + 60, endorseY + 10);
-    doc.setFont('helvetica', 'bold');
-    doc.text('EUGENE C. RAPOSALA III', margin + 30, endorseY + 14, { align: 'center' });
-    doc.setFont('helvetica', 'normal');
-    doc.text('Signature over Printed Name', margin + 30, endorseY + 18, { align: 'center' });
-    doc.text('Chief, Technical Operations Division', margin + 30, endorseY + 22, { align: 'center' });
+    doc.text('Head of the Procuring Entity', pageWidth - 35, finalY + 22, { align: 'center' });
 
     // 7. Save File
     doc.save(`APP_FY_${fiscalYear}_DICT.pdf`);
