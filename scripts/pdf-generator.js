@@ -313,18 +313,18 @@ async function generatePPMP_PDF() {
 // Aggregates all approved line items into the 12-column APP table
 // ============================================================
 
-async function generateAPP_PDF(targetYear = null) {
+async function buildAPP_PDF(targetYear = null) {
     const session = typeof getSession === 'function' ? getSession() : null;
     if (!session || session.role !== 'SUP') {
         const msg = 'Access denied: Only Suppliers can generate the Annual Procurement Plan (APP).';
         if (typeof showToast === 'function') showToast(msg); else alert(msg);
-        return;
+        return null;
     }
     
     if (!window.jspdf || !window.jspdf.jsPDF) {
         const msg = 'The PDF library could not be loaded. Check your internet connection.';
         if (typeof showToast === 'function') showToast(msg); else alert(msg);
-        return;
+        return null;
     }
 
     const { jsPDF } = window.jspdf;
@@ -337,7 +337,7 @@ async function generateAPP_PDF(targetYear = null) {
     if (typeof doc.autoTable !== 'function') {
         const msg = 'The PDF table plugin could not be loaded.';
         if (typeof showToast === 'function') showToast(msg); else alert(msg);
-        return;
+        return null;
     }
 
     // 1. Gather all Completed (fully approved) PPMPs
@@ -347,7 +347,7 @@ async function generateAPP_PDF(targetYear = null) {
     if (approvedRecords.length === 0) {
         const msg = 'No fully approved PPMPs available to generate the Annual Procurement Plan.';
         if (typeof showToast === 'function') showToast(msg); else alert(msg);
-        return;
+        return null;
     }
 
     // Determine Fiscal Year
@@ -615,9 +615,32 @@ async function generateAPP_PDF(targetYear = null) {
     doc.text('Signature over Printed Name', pageWidth - 35, finalY + 18, { align: 'center' });
     doc.text('Head of the Procuring Entity', pageWidth - 35, finalY + 22, { align: 'center' });
 
-    // 7. Save File
-    doc.save(`APP_FY_${fiscalYear}_DICT.pdf`);
+    // 7. Hand the finished document back (saving / previewing is up to the caller)
+    return { doc, fiscalYear, fileName: `APP_FY_${fiscalYear}_DICT.pdf` };
+}
+
+// Builds the APP and downloads it.
+async function generateAPP_PDF(targetYear = null) {
+    const built = await buildAPP_PDF(targetYear);
+    if (!built) return;
+
+    built.doc.save(built.fileName);
     if (typeof showToast === 'function') {
-        showToast(`Annual Procurement Plan for FY ${fiscalYear} generated successfully.`);
+        showToast(`Annual Procurement Plan for FY ${built.fiscalYear} generated successfully.`);
     }
+}
+
+// Builds the APP but does NOT download it - returns a PDF Blob for the
+// preview dialog (previewAPP_PDF -> openAppPreviewModal in dashboard-logic.js).
+// Uses the exact same builder as generateAPP_PDF, so the preview always
+// matches the downloaded file. Returns null if it could not be built.
+async function previewAPP_PDF(targetYear = null) {
+    const built = await buildAPP_PDF(targetYear);
+    if (!built) return null;
+
+    return {
+        blob: built.doc.output('blob'),
+        fiscalYear: built.fiscalYear,
+        fileName: built.fileName
+    };
 }

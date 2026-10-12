@@ -1236,6 +1236,145 @@ async function runGenerateApp() {
     }
 }
 
+// ------------------------------------------------------------
+// Preview APP: builds the same PDF as Generate APP, but shows it in a
+// dialog first (with Download / Open in new tab) instead of downloading.
+// ------------------------------------------------------------
+
+let appPreviewEl = null;
+let appPreviewUrl = null;
+let appPreviewFile = null;
+let appPreviewPrevFocus = null;
+
+function setAppPreviewBusy(busy) {
+    document.querySelectorAll('[data-app-preview-btn]').forEach(function (el) {
+        const label = el.querySelector('.db-app-label');
+        el.classList.toggle('is-loading', busy);
+        el.setAttribute('aria-busy', busy ? 'true' : 'false');
+        if (!label) return;
+        if (busy) {
+            el.dataset.idleLabel = label.textContent;
+            label.textContent = 'Preparing\u2026';
+        } else if (el.dataset.idleLabel) {
+            label.textContent = el.dataset.idleLabel;
+        }
+    });
+}
+
+async function runPreviewApp() {
+    if (appGenerating) return;
+
+    if (!isSupplierSession()) {
+        showToast('Only Suppliers can preview the Annual Procurement Plan.');
+        return;
+    }
+    if (typeof previewAPP_PDF !== 'function') {
+        showToast('The PDF generator is not available on this page.');
+        return;
+    }
+
+    appGenerating = true;
+    setAppPreviewBusy(true);
+    try {
+        const result = await previewAPP_PDF();
+        if (result) openAppPreviewModal(result);
+    } catch (err) {
+        console.error('APP preview failed:', err);
+        showToast('The APP preview could not be prepared. Please try again.');
+    } finally {
+        appGenerating = false;
+        setAppPreviewBusy(false);
+    }
+}
+
+function buildAppPreviewModal() {
+    const overlay = document.createElement('div');
+    overlay.className = 'app-preview-overlay';
+    overlay.id = 'appPreviewOverlay';
+    overlay.innerHTML =
+        '<div class="app-preview-modal" role="dialog" aria-modal="true" aria-labelledby="appPreviewTitle">' +
+            '<div class="app-preview-head">' +
+                '<h3 id="appPreviewTitle">Annual Procurement Plan Preview</h3>' +
+                '<button type="button" class="app-preview-x" data-app-preview-close aria-label="Close preview">&times;</button>' +
+            '</div>' +
+            '<div class="app-preview-body">' +
+                '<iframe id="appPreviewFrame" class="app-preview-frame" title="Annual Procurement Plan preview"></iframe>' +
+                '<p class="app-preview-fallback">If the preview does not show on this device, use <strong>Open in new tab</strong> or <strong>Download PDF</strong>.</p>' +
+            '</div>' +
+            '<div class="app-preview-actions">' +
+                '<button type="button" class="app-preview-btn is-secondary" data-app-preview-close>Close</button>' +
+                '<span class="app-preview-spacer"></span>' +
+                '<button type="button" class="app-preview-btn is-secondary" data-app-preview-open>Open in new tab</button>' +
+                '<button type="button" class="app-preview-btn" data-app-preview-download>Download PDF</button>' +
+            '</div>' +
+        '</div>';
+
+    overlay.addEventListener('click', function (e) {
+        if (e.target === overlay) closeAppPreviewModal();
+    });
+    overlay.querySelectorAll('[data-app-preview-close]').forEach(function (b) {
+        b.addEventListener('click', closeAppPreviewModal);
+    });
+    overlay.querySelector('[data-app-preview-open]').addEventListener('click', function () {
+        if (appPreviewUrl) window.open(appPreviewUrl, '_blank', 'noopener');
+    });
+    overlay.querySelector('[data-app-preview-download]').addEventListener('click', function () {
+        if (!appPreviewUrl) return;
+        const a = document.createElement('a');
+        a.href = appPreviewUrl;
+        a.download = appPreviewFile || 'APP.pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        showToast('Annual Procurement Plan downloaded.');
+    });
+
+    document.body.appendChild(overlay);
+    return overlay;
+}
+
+function onAppPreviewKeydown(e) {
+    if (e.key === 'Escape' && appPreviewEl && appPreviewEl.classList.contains('show')) {
+        e.preventDefault();
+        closeAppPreviewModal();
+    }
+}
+
+function openAppPreviewModal(result) {
+    if (!appPreviewEl) appPreviewEl = buildAppPreviewModal();
+
+    // Drop any previous preview before showing the new one.
+    if (appPreviewUrl) URL.revokeObjectURL(appPreviewUrl);
+    appPreviewUrl = URL.createObjectURL(result.blob);
+    appPreviewFile = result.fileName;
+
+    appPreviewEl.querySelector('#appPreviewTitle').textContent =
+        'Annual Procurement Plan Preview \u2014 FY ' + result.fiscalYear;
+    appPreviewEl.querySelector('#appPreviewFrame').src = appPreviewUrl + '#view=FitH';
+
+    appPreviewPrevFocus = document.activeElement;
+    appPreviewEl.classList.add('show');
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', onAppPreviewKeydown);
+    appPreviewEl.querySelector('[data-app-preview-download]').focus();
+}
+
+function closeAppPreviewModal() {
+    if (!appPreviewEl) return;
+    appPreviewEl.classList.remove('show');
+    document.body.style.overflow = '';
+    document.removeEventListener('keydown', onAppPreviewKeydown);
+
+    appPreviewEl.querySelector('#appPreviewFrame').src = 'about:blank';
+    if (appPreviewUrl) {
+        URL.revokeObjectURL(appPreviewUrl);
+        appPreviewUrl = null;
+    }
+    if (appPreviewPrevFocus && typeof appPreviewPrevFocus.focus === 'function') {
+        appPreviewPrevFocus.focus();
+    }
+}
+
 // Adds the "Generate APP" link to the sidebar, right under Entries.
 function addGenerateAppNavItem() {
     document.querySelectorAll('.db-nav').forEach(function (nav) {
@@ -1265,8 +1404,9 @@ function addGenerateAppNavItem() {
 function renderAppExportButton() {
     const supplier = isSupplierSession();
 
-    // Entries header button + every Export APP button in the request modal.
-    document.querySelectorAll('.export-app-btn, [data-app-entry-btn]').forEach(function (btn) {
+    // Entries header buttons (Preview APP + Generate APP) + every Export APP
+    // button in the request modal.
+    document.querySelectorAll('.export-app-btn, [data-app-entry-btn], [data-app-preview-btn]').forEach(function (btn) {
         btn.style.display = supplier ? 'inline-flex' : 'none';
     });
 

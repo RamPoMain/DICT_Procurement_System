@@ -2176,3 +2176,141 @@ html[data-theme="light"] .modal-status-badge.is-returned { color: #B91C1C; }
     .db-topbar-actions { width: 100%; }
     .db-app-btn { flex: 1; }
 }
+
+/* ============================================================
+   SUPPLIER: PREVIEW APP
+   "Preview APP" sits beside "Generate APP" in the Entries header
+   (secondary style) and opens the .app-preview-* dialog.
+   ============================================================ */
+
+.db-app-btn.is-secondary {
+    background: var(--db-accent-soft);
+    border-color: var(--db-accent);
+    color: var(--db-accent);
+    box-shadow: none;
+}
+
+.db-app-btn.is-secondary:hover {
+    background: var(--db-accent);
+    color: #fff;
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.25);
+}
+
+.app-preview-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(2, 6, 18, 0.6);
+}
+
+.app-preview-overlay.show { display: flex; }
+
+.app-preview-modal {
+    width: 100%;
+    max-width: 1100px;
+    height: 90vh;
+    display: flex;
+    flex-direction: column;
+    padding: 18px 20px 16px;
+    border: 1px solid var(--db-border);
+    border-radius: var(--db-radius);
+    background: var(--db-card);
+    color: var(--db-text);
+    box-shadow: var(--db-shadow);
+}
+
+.app-preview-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.app-preview-head h3 { margin: 0; font-size: 16px; }
+
+.app-preview-x {
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--db-text-dim);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.app-preview-x:hover { background: var(--db-accent-soft); color: var(--db-text); }
+
+.app-preview-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.app-preview-frame {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    border: 1px solid var(--db-border);
+    border-radius: 8px;
+    background: #fff;
+}
+
+.app-preview-fallback {
+    margin: 0;
+    font-size: 11.5px;
+    color: var(--db-text-faint);
+}
+
+.app-preview-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--db-border);
+}
+
+.app-preview-spacer { flex: 1; }
+
+.app-preview-btn {
+    padding: 9px 16px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: var(--db-accent);
+    color: #fff;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.app-preview-btn:hover { background: #2563EB; }
+
+.app-preview-btn.is-secondary {
+    background: transparent;
+    border-color: var(--db-field-border);
+    color: var(--db-text);
+}
+
+.app-preview-btn.is-secondary:hover {
+    background: var(--db-accent-soft);
+    border-color: var(--db-accent);
+}
+
+@media (max-width: 620px) {
+    .app-preview-overlay { padding: 0; }
+    .app-preview-modal { height: 100vh; max-width: none; border-radius: 0; }
+    .app-preview-actions { flex-wrap: wrap; }
+    .app-preview-spacer { display: none; }
+    .app-preview-btn { flex: 1; }
+}
