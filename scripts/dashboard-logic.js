@@ -1243,7 +1243,6 @@ async function runGenerateApp() {
 
 let appPreviewEl = null;
 let appPreviewUrl = null;
-let appPreviewFile = null;
 let appPreviewPrevFocus = null;
 
 function setAppPreviewBusy(busy) {
@@ -1299,13 +1298,12 @@ function buildAppPreviewModal() {
             '</div>' +
             '<div class="app-preview-body">' +
                 '<iframe id="appPreviewFrame" class="app-preview-frame" title="Annual Procurement Plan preview"></iframe>' +
-                '<p class="app-preview-fallback">If the preview does not show on this device, use <strong>Open in new tab</strong> or <strong>Download PDF</strong>.</p>' +
+                '<p class="app-preview-fallback">If the preview does not show on this device, use <strong>Open in new tab</strong>.</p>' +
             '</div>' +
             '<div class="app-preview-actions">' +
                 '<button type="button" class="app-preview-btn is-secondary" data-app-preview-close>Close</button>' +
                 '<span class="app-preview-spacer"></span>' +
-                '<button type="button" class="app-preview-btn is-secondary" data-app-preview-open>Open in new tab</button>' +
-                '<button type="button" class="app-preview-btn" data-app-preview-download>Download PDF</button>' +
+                '<button type="button" class="app-preview-btn" data-app-preview-open>Open in new tab</button>' +
             '</div>' +
         '</div>';
 
@@ -1317,16 +1315,6 @@ function buildAppPreviewModal() {
     });
     overlay.querySelector('[data-app-preview-open]').addEventListener('click', function () {
         if (appPreviewUrl) window.open(appPreviewUrl, '_blank', 'noopener');
-    });
-    overlay.querySelector('[data-app-preview-download]').addEventListener('click', function () {
-        if (!appPreviewUrl) return;
-        const a = document.createElement('a');
-        a.href = appPreviewUrl;
-        a.download = appPreviewFile || 'APP.pdf';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        showToast('Annual Procurement Plan downloaded.');
     });
 
     document.body.appendChild(overlay);
@@ -1346,7 +1334,6 @@ function openAppPreviewModal(result) {
     // Drop any previous preview before showing the new one.
     if (appPreviewUrl) URL.revokeObjectURL(appPreviewUrl);
     appPreviewUrl = URL.createObjectURL(result.blob);
-    appPreviewFile = result.fileName;
 
     appPreviewEl.querySelector('#appPreviewTitle').textContent =
         'Annual Procurement Plan Preview \u2014 FY ' + result.fiscalYear;
@@ -1356,7 +1343,7 @@ function openAppPreviewModal(result) {
     appPreviewEl.classList.add('show');
     document.body.style.overflow = 'hidden';
     document.addEventListener('keydown', onAppPreviewKeydown);
-    appPreviewEl.querySelector('[data-app-preview-download]').focus();
+    appPreviewEl.querySelector('[data-app-preview-open]').focus();
 }
 
 function closeAppPreviewModal() {
