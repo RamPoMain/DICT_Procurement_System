@@ -29,8 +29,8 @@ let uploadIdCounter = 0;
 
 let isViewMode = false;
 
-const MAX_FILE_SIZE = 2 * 1024 * 1024;   // 2MB per file
-const MAX_TOTAL_SIZE = 8 * 1024 * 1024;  // 8MB total
+const MAX_FILE_SIZE = 10 * 1024 * 1024;  // 10MB per file (files live in IndexedDB, see file-store.js)
+const MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50MB total per item
 // Approval chain. `role` is a STAGE code: it must equal the `stage` set on the
 // approver's account in Auth.js, and is what record.currentApproverRole stores.
 // (The record's `status` stays 'For Approval' for the whole chain.)
@@ -224,31 +224,68 @@ function clearAllFieldErrors() {
 // PPMP NUMBER AUTO-INCREMENT
 // ============================================================
 
+// Every office numbers its PPMPs from 1, independently of the others.
+// An office's "last approved number" is also remembered in its own counter
+// (localStorage 'ppmp_number_counters'), so deleting an approved PPMP can never
+// make its number come around again. Drafts and returned PPMPs don't move the
+// counter - only an approval does.
+const PPMP_COUNTER_KEY = 'ppmp_number_counters';
+
+function readPpmpCounters() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(PPMP_COUNTER_KEY));
+        return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+// Called when a PPMP is fully approved (see performReviewAction).
+function recordApprovedPpmpNumber(record) {
+    if (!record) return;
+    const number = parseInt(record.ppmp_no, 10);
+    if (isNaN(number)) return;
+
+    const office = record.end_user || 'N/A';
+    const counters = readPpmpCounters();
+    if (number > (Number(counters[office]) || 0)) {
+        counters[office] = number;
+        try {
+            localStorage.setItem(PPMP_COUNTER_KEY, JSON.stringify(counters));
+        } catch (e) {
+            console.warn('Could not save the PPMP number counter', e);
+        }
+    }
+}
+
 function getNextPpmpNumber() {
     const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
 
-    // THE FILTER: Only look at records that are already "Completed" (Verified),
-    // and only this office's own - every office numbers its PPMPs from 1
-    // independently, so another office's approvals never move your next number.
-    // (Accounts without an office fall back to counting everything.)
     const session = typeof getSession === 'function' ? getSession() : null;
     const office = session && session.office ? session.office : null;
-    const approvedRecords = records.filter(record =>
-        record.status === 'Completed' && (!office || record.end_user === office)
-    );
 
-    let highestNumber = 0;
+    let highest = 0;
 
-    approvedRecords.forEach(record => {
+    // Highest approved number still on record for this office...
+    records.forEach(record => {
+        if (record.status !== 'Completed') return;
+        if (office && record.end_user !== office) return;
         const number = parseInt(record.ppmp_no, 10);
-        if (!isNaN(number) && number > highestNumber) {
-            highestNumber = number;
-        }
+        if (!isNaN(number) && number > highest) highest = number;
     });
 
-    // Returns the next number after this office's highest approved one
-    // If the office has no approved records yet, it starts at 1
-    return highestNumber + 1;
+    // ...or the office's remembered counter, whichever is higher.
+    const counters = readPpmpCounters();
+    if (office) {
+        highest = Math.max(highest, Number(counters[office]) || 0);
+    } else {
+        // Accounts without an office fall back to counting everything.
+        Object.keys(counters).forEach(key => {
+            highest = Math.max(highest, Number(counters[key]) || 0);
+        });
+    }
+
+    return highest + 1;
 }
 
 
@@ -600,10 +637,35 @@ function initializeStrategies() {
 // SAVE PROCUREMENT REQUEST
 // ============================================================
 
+// What a saved record keeps for one attachment: a small reference, never the
+// file bytes (those are in IndexedDB under entry.fileId - see file-store.js).
+// A document that came from an older record and was not migrated yet still
+// carries its inline dataUrl; file-store.js moves it on the next page load.
+function buildSavedDocFromEntry(entry) {
+    const doc = {
+        name: entry.file.name,
+        size: entry.file.size,
+        type: (entry.file && entry.file.type) || entry.type || ''
+    };
+    if (entry.fileId) {
+        doc.fileId = entry.fileId;
+    } else if (entry.dataUrl) {
+        doc.dataUrl = entry.dataUrl;
+    }
+    return doc;
+}
+
 function saveProcurementRequest() {
     // If we are just viewing, clicking "Close" (Finish button) should just close the modal
     if (isViewMode) {
         closeRequestModal();
+        return;
+    }
+
+    // Only requesting accounts may create or change PPMP entries.
+    const permSession = typeof getSession === 'function' ? getSession() : null;
+    if (!permSession || !permSession.canRequest) {
+        showToast('Your account is view/approve only and cannot save requests.');
         return;
     }
 
@@ -630,6 +692,14 @@ function saveProcurementRequest() {
         return;
     }
 
+    // Attachments are written to IndexedDB as soon as they are picked; wait
+    // for any that are still being stored so the record never points at a
+    // file that is not there yet.
+    if (uploadedFiles.some(entry => entry.pending)) {
+        showToast('Still attaching files - wait a moment, then press Finish again.');
+        return;
+    }
+
     const db =
         JSON.parse(
             localStorage.getItem(
@@ -644,6 +714,15 @@ function saveProcurementRequest() {
     const existingRecord = currentEditingId
         ? db.find(r => r.id == currentEditingId)
         : null;
+
+    // The PPMP may have been submitted or approved since this form was opened
+    // (for example from another tab). Locked PPMPs are read-only.
+    if (existingRecord && getPpmpStatus(existingRecord) !== 'Draft') {
+        showToast('This PPMP was submitted or approved in the meantime, so it can no longer be changed.');
+        closeRequestModal();
+        if (typeof refreshDashboardRecords === 'function') refreshDashboardRecords();
+        return;
+    }
 
     // Everything specific to this one procurement project — as opposed to
     // the PPMP header info (ppmp_no, fiscal year, end-user, indicative/final)
@@ -723,17 +802,7 @@ function saveProcurementRequest() {
                 : '',
 
         supporting_documents:
-            uploadedFiles.map(entry => ({
-
-                name:
-                    entry.file.name,
-
-                size:
-                    entry.file.size,
-
-                dataUrl:
-                    entry.dataUrl
-            }))
+            uploadedFiles.map(buildSavedDocFromEntry)
     };
 
     let entry;
@@ -2061,8 +2130,13 @@ function addFiles(fileList) {
 
                 objectUrl,
 
-                dataUrl:
-                    null
+                // The bytes go to IndexedDB (file-store.js); the saved record
+                // only keeps this id. `pending` blocks saving until it is stored.
+                fileId: FileStore.newId(),
+
+                isNew: true,
+
+                pending: true
             };
 
 
@@ -2074,35 +2148,32 @@ function addFiles(fileList) {
             renderUploadedFiles();
 
 
-            // ------------------------------------------------
-            // Read file as Base64
-            // ------------------------------------------------
+            FileStore.put(entry.fileId, file)
+                .then(function () {
 
-            const reader =
-                new FileReader();
+                    entry.pending = false;
+                })
+                .catch(function () {
 
+                    entry.pending = false;
 
-            reader.onload =
-                function (event) {
+                    uploadedFiles =
+                        uploadedFiles.filter(
+                            item =>
+                                item !== entry
+                        );
 
-                    entry.dataUrl =
-                        event.target.result;
-                };
+                    if (entry.objectUrl) {
+                        URL.revokeObjectURL(entry.objectUrl);
+                    }
 
-
-            reader.onerror =
-                function () {
+                    renderUploadedFiles();
 
                     showFieldError(
                         'supporting_docs',
-                        `The file "${file.name}" could not be read. Please try uploading it again.`
+                        `The file "${file.name}" could not be stored in this browser (storage may be full). Please free up space or try a smaller file.`
                     );
-                };
-
-
-            reader.readAsDataURL(
-                file
-            );
+                });
         });
 }
 
@@ -2127,6 +2198,20 @@ function removeUploadedFile(id) {
 
         URL.revokeObjectURL(
             entry.objectUrl
+        );
+    }
+
+
+    // A file added in this session and never saved can be deleted right away.
+    if (
+        entry &&
+        entry.isNew &&
+        entry.fileId &&
+        typeof FileStore !== 'undefined'
+    ) {
+
+        FileStore.remove(
+            entry.fileId
         );
     }
 
@@ -2734,15 +2819,25 @@ function loadRecordIntoModal(id, itemIndex = 0) {
 
     // Load Files (Visual only) — always reset first so switching to an
     // item with no files doesn't leave the previous item's files showing.
-    uploadedFiles = (item.supporting_documents || []).map(doc => ({
-        id: Math.random(),
-        file: { name: doc.name, size: doc.size },
-        dataUrl: doc.dataUrl,
-        // Browsers block target="_blank" navigation straight to a
-        // data: URL (silently opens a blank tab), so rebuild a real
-        // blob URL the link can actually open.
-        objectUrl: base64DataUrlToObjectUrl(doc.dataUrl) || doc.dataUrl
-    }));
+    uploadedFiles = (item.supporting_documents || []).map(doc => {
+        const entry = {
+            id: Math.random(),
+            file: { name: doc.name, size: doc.size, type: doc.type || '' },
+            type: doc.type || '',
+            fileId: doc.fileId || null,
+            dataUrl: doc.dataUrl || null,   // only on records not migrated yet
+            objectUrl: null
+        };
+        // Browsers block target="_blank" navigation straight to a data: URL,
+        // so read the file from storage and give the link a real blob URL.
+        FileStore.docBlob(doc).then(blob => {
+            if (blob && uploadedFiles.includes(entry)) {
+                entry.objectUrl = URL.createObjectURL(blob);
+                renderUploadedFiles();
+            }
+        }).catch(() => {});
+        return entry;
+    });
     renderUploadedFiles();
 
     // Change UI for Viewing
@@ -3071,7 +3166,15 @@ function renderReviewRemarks(record) {
     const history = record && Array.isArray(record.remarksHistory) ? record.remarksHistory : [];
     const returned = typeof isPpmpReturned === 'function' && isPpmpReturned(record);
 
-    if (!history.length && !returned) {
+    // Tracking accounts (Suppliers) see who is handling / approved a PPMP and
+    // where it is now, but not the internal remark text.
+    const trackSession = typeof getSession === 'function' ? getSession() : null;
+    const tracking = !!(trackSession && trackSession.canTrackApprovals);
+    const waitingStep = (tracking && record && getPpmpStatus(record) === 'For Approval' && typeof getApprovalStep === 'function')
+        ? getApprovalStep(record.currentApproverRole)
+        : null;
+
+    if (!history.length && !returned && !waitingStep) {
         if (box) box.classList.add('hidden');
         return;
     }
@@ -3112,6 +3215,15 @@ function renderReviewRemarks(record) {
         box.appendChild(banner);
     }
 
+    if (waitingStep) {
+        const current = document.createElement('div');
+        current.className = 'review-returned';
+        const currentTitle = document.createElement('strong');
+        currentTitle.textContent = 'Currently with: ' + waitingStep.label;
+        current.appendChild(currentTitle);
+        box.appendChild(current);
+    }
+
     if (history.length) {
         const heading = document.createElement('p');
         heading.className = 'review-history-title';
@@ -3146,7 +3258,7 @@ function renderReviewRemarks(record) {
             head.appendChild(meta);
             li.appendChild(head);
 
-            if (h.remarks) {
+            if (h.remarks && !tracking) {
                 const text = document.createElement('p');
                 text.className = 'review-item-text';
                 text.textContent = h.remarks;
@@ -3384,6 +3496,7 @@ function performReviewAction(action, remarksText) {
             record.returned_for_revision = false;
             record.is_indicative = 'Final';
             record.approved_at = Date.now();
+            recordApprovedPpmpNumber(record);
             record.approved_by = {
                 name: session.roleName,
                 role: session.role,

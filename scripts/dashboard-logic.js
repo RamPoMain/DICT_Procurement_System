@@ -41,11 +41,6 @@ function getRecords() {
     if (!session) return [];
 
     return allRecords.filter(record => {
-        // Suppliers can ONLY view final, fully approved PPMPs
-        if (session.role === 'SUP') {
-            return record.status === 'Completed';
-        }
-
         // 1. Requesters see every PPMP that belongs to their office
         //    (drafts included), whatever stage it is at.
         if (session.canRequest && record.end_user === session.office) {
@@ -852,43 +847,55 @@ function findPreviewDoc(recordId, itemId, docIndex) {
     return null;
 }
 
+// Resolves to { doc, blob } or null (after telling the user why). The file
+// bytes live in IndexedDB (FileStore); older records may still hold a dataUrl.
 function resolvePreviewDoc(btn) {
     const doc = findPreviewDoc(
         Number(btn.dataset.recordId), btn.dataset.itemId, Number(btn.dataset.docIndex)
     );
-    if (!doc || !doc.dataUrl) {
+    if (!doc || !(doc.fileId || doc.dataUrl)) {
         showToast('This file could not be opened - its contents were not saved. Re-attach it by editing the item.');
-        return null;
+        return Promise.resolve(null);
     }
-    const blob = previewDocToBlob(doc.dataUrl);
-    if (!blob) {
+    return FileStore.docBlob(doc).then(function (blob) {
+        if (!blob) {
+            showToast('This file could not be read. Re-attach it by editing the item.');
+            return null;
+        }
+        return { doc: doc, blob: blob };
+    }).catch(function () {
         showToast('This file could not be read. Re-attach it by editing the item.');
         return null;
-    }
-    return { doc: doc, blob: blob };
+    });
 }
 
 function openPreviewDoc(btn, event) {
     if (event) { event.preventDefault(); event.stopPropagation(); }
-    const found = resolvePreviewDoc(btn);
-    if (!found) return;
-    const url = URL.createObjectURL(found.blob);
-    const win = window.open(url, '_blank');
-    if (!win) {
-        // Pop-up blocked: fall back to downloading so the click still does something.
-        downloadBlobAs(url, found.doc.name || 'document');
-        showToast('Your browser blocked the new tab, so the file was downloaded instead.');
-    }
-    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+    // Open the tab right away (inside the click) so pop-up blockers allow it,
+    // then point it at the file once it has been read from storage.
+    const win = window.open('', '_blank');
+    resolvePreviewDoc(btn).then(function (found) {
+        if (!found) { if (win) win.close(); return; }
+        const url = URL.createObjectURL(found.blob);
+        if (win) {
+            win.location.href = url;
+        } else {
+            // Pop-up blocked: fall back to downloading so the click still does something.
+            downloadBlobAs(url, found.doc.name || 'document');
+            showToast('Your browser blocked the new tab, so the file was downloaded instead.');
+        }
+        setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+    });
 }
 
 function downloadPreviewDoc(btn, event) {
     if (event) { event.preventDefault(); event.stopPropagation(); }
-    const found = resolvePreviewDoc(btn);
-    if (!found) return;
-    const url = URL.createObjectURL(found.blob);
-    downloadBlobAs(url, found.doc.name || 'document');
-    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    resolvePreviewDoc(btn).then(function (found) {
+        if (!found) return;
+        const url = URL.createObjectURL(found.blob);
+        downloadBlobAs(url, found.doc.name || 'document');
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    });
 }
 
 function downloadBlobAs(url, fileName) {
@@ -908,7 +915,7 @@ function renderPreviewDocs(item, recordId) {
 
     return '<ul class="ep-list ep-doc-list">' + docs.map(function (doc, index) {
         const name = (doc && doc.name) || 'Document';
-        if (!doc || !doc.dataUrl) {
+        if (!doc || !(doc.fileId || doc.dataUrl)) {
             return '<li>' + escapeHtml(name) + '</li>';
         }
         const attrs = ' data-record-id="' + Number(recordId) + '" data-item-id="' + escapeHtml(item.id) +
@@ -1855,12 +1862,12 @@ function reapplyPreviewErrors() {
 
 // ------------------------------------------------------------
 // Supporting documents while editing: attach, open, download, remove.
-// Same limits as the request form (2 MB per file, 8 MB per item).
+// Same limits as the request form (see MAX_FILE_SIZE / MAX_TOTAL_SIZE).
 // ------------------------------------------------------------
 function previewFileLimits() {
     return {
-        file: (typeof MAX_FILE_SIZE === 'number') ? MAX_FILE_SIZE : 2 * 1024 * 1024,
-        total: (typeof MAX_TOTAL_SIZE === 'number') ? MAX_TOTAL_SIZE : 8 * 1024 * 1024
+        file: (typeof MAX_FILE_SIZE === 'number') ? MAX_FILE_SIZE : 10 * 1024 * 1024,
+        total: (typeof MAX_TOTAL_SIZE === 'number') ? MAX_TOTAL_SIZE : 50 * 1024 * 1024
     };
 }
 
@@ -1883,7 +1890,7 @@ function renderPreviewDocEditor(item, recordId) {
         : '<ul class="ep-list ep-doc-list">' + docs.map(function (doc, index) {
             const name = (doc && doc.name) || 'Document';
             const attrs = ' data-record-id="' + rid + '" data-item-id="' + iid + '" data-doc-index="' + index + '"';
-            const open = (doc && doc.dataUrl)
+            const open = (doc && (doc.fileId || doc.dataUrl))
                 ? '<button type="button" class="ep-doc-link"' + attrs + ' title="Open ' + escapeHtml(name) + '" onclick="openPreviewDoc(this, event)">' + escapeHtml(name) + '</button>' +
                   '<button type="button" class="ep-doc-download"' + attrs + ' title="Download ' + escapeHtml(name) + '" aria-label="Download ' + escapeHtml(name) + '" onclick="downloadPreviewDoc(this, event)">' +
                   '<svg viewBox="0 0 24 24" width="12" height="12" fill="none"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 20h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>'
@@ -1948,21 +1955,23 @@ function onPreviewDocsPicked(input) {
         draft.pending = (draft.pending || 0) + 1;
         draft.pendingSize = (draft.pendingSize || 0) + file.size;
 
-        const reader = new FileReader();
-        reader.onload = function (event) {
+        // The file goes straight into IndexedDB; the record only keeps a reference.
+        const fileId = FileStore.newId();
+        FileStore.put(fileId, file).then(function () {
             draft.pending -= 1;
             draft.pendingSize -= file.size;
-            if (previewDrafts[recordId] !== draft) return;      // edit was cancelled meanwhile
-            item.supporting_documents.push({ name: file.name, size: file.size, dataUrl: event.target.result });
+            if (previewDrafts[recordId] !== draft) {      // edit was cancelled meanwhile
+                FileStore.remove(fileId);
+                return;
+            }
+            item.supporting_documents.push({ name: file.name, size: file.size, type: file.type || '', fileId: fileId });
             refreshPreviewDocCell(recordId, itemId);
             updatePreviewDirtyIndicator(recordId);
-        };
-        reader.onerror = function () {
+        }).catch(function () {
             draft.pending -= 1;
             draft.pendingSize -= file.size;
-            showToast('"' + file.name + '" could not be read. Please try attaching it again.');
-        };
-        reader.readAsDataURL(file);
+            showToast('"' + file.name + '" could not be stored in this browser (storage may be full). Please try again.');
+        });
     });
 
     if (problems.length) {

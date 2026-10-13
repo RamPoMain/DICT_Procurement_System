@@ -804,6 +804,12 @@
 
     // Saves the items. Mirrors the record shape used by saveProcurementRequest().
     function commitImport(items) {
+        var permSession = typeof getSession === 'function' ? getSession() : null;
+        if (!permSession || !permSession.canRequest) {
+            toast('Your account is view/approve only and cannot import items.');
+            return false;
+        }
+
         var header = readHeader();
 
         if (!header.is_indicative) {
@@ -822,6 +828,12 @@
         var db = JSON.parse(localStorage.getItem('procurement_records')) || [];
         var session = typeof getSession === 'function' ? getSession() : null;
         var existing = isAddingToExisting() ? db.find(function (r) { return r.id == currentEditingId; }) : null;
+
+        // The PPMP may have been submitted or approved since the form opened.
+        if (existing && typeof getPpmpStatus === 'function' && getPpmpStatus(existing) !== 'Draft') {
+            toast('This PPMP was submitted or approved in the meantime, so items can no longer be added.');
+            return false;
+        }
         var ppmpNo;
 
         if (existing) {

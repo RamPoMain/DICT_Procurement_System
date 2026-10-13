@@ -131,14 +131,15 @@ const ACCOUNTS = [
         // Suppliers: view-only. No `canRequest` (can't create PPMPs) and no
         // `canApprove` (can't approve). There is deliberately no `office`,
         // so getRecords() in dashboard-logic.js applies no office filter;
-        // `canTrackApprovals` (below) is what lets it see submitted PPMPs.
+        // `canTrackApprovals` (below) is what lets it see submitted PPMPs (and
+        // which stage / approver each one is with) - never Drafts.
         email: 'suppliers@dict.gov.ph',
         password: 'suppliers123',
         role: 'SUP',
         roleName: 'Suppliers',
         canRequest: false,
         canApprove: false,
-        canTrackApprovals: false
+        canTrackApprovals: true
     },
     {
         email: 'test@dict.gov.ph',
