@@ -37,6 +37,16 @@ const ACCOUNTS = [
         office: 'Free Public Internet Access Program',
         canRequest: true
     },
+
+    {
+        email: 'GASS@dict.gov.ph',
+        password: 'GASS123',
+        role: 'GASS',
+        roleName: 'GASS',
+        office: 'General Administration and Support Services',
+        canRequest: true
+    },
+
     // Head accounts are the first approvers to be followed by TOD
     {
         email: 'FPIAPHEAD@dict.gov.ph',
@@ -61,6 +71,18 @@ const ACCOUNTS = [
         headOf: 'ICT Literacy Competency and Development Bureu'
     },
 
+    {
+        email: 'GASSHEAD@dict.gov.ph',
+        password: 'GASSH123',
+        role: 'GASSH',
+        roleName: 'GASS Head',
+        office: 'General Administration and Support Services',
+        canRequest: true,
+        canApprove: true,
+        stage: 'HEAD',
+        headOf: 'General Administration and Support Services'
+    },
+
     //Next is the TOD, who is the second approver after the heads of the offices
     {
         email: 'tod@dict.gov.ph',
@@ -82,6 +104,16 @@ const ACCOUNTS = [
         canApprove: true,
         stage: 'BO'
     },
+
+    {
+        email: 'ard@dict.gov.ph',
+        password: 'ard123',
+        role: 'ARD',
+        roleName: 'Assistant Regional Director',
+        canApprove: true,
+        stage: 'RD'
+    },
+    
     {
         // Authorized approver. `canApprove` is what unlocks the "Approve
         // PPMP" action. There is deliberately no `office`: getRecords() in
