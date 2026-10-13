@@ -315,13 +315,13 @@ async function generatePPMP_PDF() {
 
 // ============================================================
 // ANNUAL PROCUREMENT PLAN (APP) — PDF GENERATOR (GPPB FORMAT)
-// Aggregates all approved line items into the 12-column APP table
 // ============================================================
 
 async function buildAPP_PDF(targetYear = null) {
     const session = typeof getSession === 'function' ? getSession() : null;
-    if (!session || session.role !== 'SUP') {
-        const msg = 'Access denied: Only Suppliers can generate the Annual Procurement Plan (APP).';
+    const allowedRoles = ['SUP', 'ARD', 'RD'];
+    if (!session || !allowedRoles.includes(session.role)) {
+        const msg = 'Access denied: You do not have permission to access the Annual Procurement Plan (APP).';
         if (typeof showToast === 'function') showToast(msg); else alert(msg);
         return null;
     }
@@ -358,6 +358,10 @@ async function buildAPP_PDF(targetYear = null) {
     // Determine Fiscal Year
     const fiscalYear = targetYear || approvedRecords[0].fiscal_year || new Date().getFullYear();
     const relevantRecords = approvedRecords.filter(r => !targetYear || String(r.fiscal_year) === String(targetYear));
+
+    // Retrieve the APP approval state for this Fiscal Year
+    const appRecord = typeof getAppRecord === 'function' ? getAppRecord(fiscalYear) : null;
+    const isFinalApp = !!(appRecord && appRecord.status === 'Completed');
 
     // Flatten line items with their parent implementing unit
     let appItems = [];
@@ -409,20 +413,21 @@ async function buildAPP_PDF(targetYear = null) {
         currentY = 25;
     }
 
-    // 3. Document Title & Checkboxes (Matches Screenshot)
+    // 3. Document Title & Checkboxes (Indicative while in review; Final once approved by RD)
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(13);
     doc.text(`ANNUAL PROCUREMENT PLAN FOR FY ${fiscalYear}`, pageWidth / 2, currentY, { align: 'center' });
 
     currentY += 6;
     doc.setFontSize(9);
-    // [ ] INDICATIVE
+    // [X] INDICATIVE
     doc.rect(pageWidth / 2 - 38, currentY - 3.5, 4, 4);
+    if (!isFinalApp) doc.text('X', pageWidth / 2 - 37, currentY - 0.5);
     doc.text('INDICATIVE', pageWidth / 2 - 32, currentY);
 
-    // [X] FINAL (Always checked for fully approved APP)
+    // [X] FINAL
     doc.rect(pageWidth / 2 + 5, currentY - 3.5, 4, 4);
-    doc.text('X', pageWidth / 2 + 6, currentY - 0.5);
+    if (isFinalApp) doc.text('X', pageWidth / 2 + 6, currentY - 0.5);
     doc.text('FINAL', pageWidth / 2 + 11, currentY);
 
     currentY += 8;
@@ -454,12 +459,10 @@ async function buildAPP_PDF(targetYear = null) {
         ]
     ];
 
-    // Helper budget parser
     const parseBudget = (raw) => parseFloat(String(raw).replace(/[^0-9.]/g, '')) || 0;
     const totalBudget = appItems.reduce((sum, item) => sum + parseBudget(item.budget), 0);
     const formattedTotal = totalBudget.toLocaleString('en-PH', { minimumFractionDigits: 2 });
 
-    // Helper to format an item row
     function formatAppRow(item) {
         const itemBudget = parseBudget(item.budget).toLocaleString('en-PH', { minimumFractionDigits: 2 });
         const strategies = Array.isArray(item.strategies) ? item.strategies.join('\n') : (item.strategies || '');
@@ -480,18 +483,41 @@ async function buildAPP_PDF(targetYear = null) {
         ];
     }
 
-    // Split the items into the three APP sections. The "General Requirements /
-    // Miscellaneous / Common Supplies and Equipment" choice made on an item
-    // decides its section; an item with no choice keeps the old rule
-    // (Direct Acquisition -> Miscellaneous, everything else -> General).
-    const isDirectAcquisition = (item) => String(item.mode || '').trim().toLowerCase().includes('direct acquisition');
+    // ------------------------------------------------------------
+    // AUTOMATIC APP SECTION ROUTING:
+    // 1. GASS entries automatically go to Common Supplies and Equipment (CSE)
+    // 2. Direct Acquisition entries go to Miscellaneous Items (Sec. 32.2)
+    // 3. All other entries go to General Requirements
+    // ------------------------------------------------------------
+    const isGass = (item) => {
+        const eu = String(item.end_user || '').toLowerCase();
+        return eu.includes('general administration') || eu.includes('gass');
+    };
+
+    const isDirectAcquisition = (item) => {
+        return String(item.mode || '').trim().toLowerCase().includes('direct acquisition');
+    };
+
     const appSectionOf = (item) => {
+        // GASS items automatically fall under CSE
+        if (isGass(item)) {
+            return 'cse';
+        }
+
+        // Direct Acquisition items fall under Miscellaneous
+        if (isDirectAcquisition(item)) {
+            return 'misc';
+        }
+
+        // Check explicit override if previously tagged
         const chosen = String(item.general_requirements || '').trim();
         if (chosen === 'Common Supplies and Equipment') return 'cse';
         if (chosen === 'Miscellaneous') return 'misc';
-        if (chosen === 'General Requirements') return 'general';
-        return isDirectAcquisition(item) ? 'misc' : 'general';
+
+        // All other projects fall under General Requirements
+        return 'general';
     };
+
     const generalItems = appItems.filter(item => appSectionOf(item) === 'general');
     const directAcquisitionItems = appItems.filter(item => appSectionOf(item) === 'misc');
     const cseItems = appItems.filter(item => appSectionOf(item) === 'cse');
@@ -499,53 +525,32 @@ async function buildAPP_PDF(targetYear = null) {
     // 5. Data Rows
     const tableBody = [];
 
-    // --- Section 1: General Requirements ---
+    // Section 1: General Requirements
     tableBody.push([
-        {
-            content: 'General Requirements',
-            colSpan: 12,
-            styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' }
-        }
+        { content: 'General Requirements', colSpan: 12, styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' } }
     ]);
-
     if (generalItems.length > 0) {
-        generalItems.forEach(item => {
-            tableBody.push(formatAppRow(item));
-        });
+        generalItems.forEach(item => tableBody.push(formatAppRow(item)));
     } else {
         tableBody.push(['', '', '', '', '', '', '', '', '', '', '', '']);
     }
 
-    // --- Section 2: Miscellaneous Items (for Direct Acquisition only) Sec 32.2 of RA No. 12009 ---
+    // Section 2: Miscellaneous Items (Direct Acquisition)
     tableBody.push([
-        {
-            content: 'Miscellaneous Items (for Direct Acquisition only) Sec 32.2 of RA No. 12009',
-            colSpan: 12,
-            styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' }
-        }
+        { content: 'Miscellaneous Items (for Direct Acquisition only) Sec 32.2 of RA No. 12009', colSpan: 12, styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' } }
     ]);
-
     if (directAcquisitionItems.length > 0) {
-        directAcquisitionItems.forEach(item => {
-            tableBody.push(formatAppRow(item));
-        });
+        directAcquisitionItems.forEach(item => tableBody.push(formatAppRow(item)));
     } else {
         tableBody.push(['', '', '', '', '', '', '', '', '', '', '', '']);
     }
 
-    // --- Section 3: Common Supplies and Equipment (CSE) ---
+    // Section 3: Common Supplies and Equipment
     tableBody.push([
-        {
-            content: 'Common Supplies and Equipment (CSE)',
-            colSpan: 12,
-            styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' }
-        }
+        { content: 'Common Supplies and Equipment (CSE)', colSpan: 12, styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' } }
     ]);
-
     if (cseItems.length > 0) {
-        cseItems.forEach(item => {
-            tableBody.push(formatAppRow(item));
-        });
+        cseItems.forEach(item => tableBody.push(formatAppRow(item)));
     } else {
         tableBody.push(['', '', '', '', '', '', '', '', '', '', '', '']);
     }
@@ -558,22 +563,8 @@ async function buildAPP_PDF(targetYear = null) {
         ''
     ]);
 
-    // Usable Width & Column Width distribution (Total: 277mm)
     const usableWidth = pageWidth - margin * 2;
-    const colWeights = [
-        9,    // Col 1: Project Title
-        9.5,  // Col 2: End-User
-        10.5, // Col 3: General Description
-        9,    // Col 4: Mode of Procurement
-        6.5,  // Col 5: EPA (Yes/No)
-        9.5,  // Col 6: Bid Criteria
-        6.5,  // Col 7: Start Date
-        6.5,  // Col 8: End Date
-        7,    // Col 9: Source of Fund
-        9.5,  // Col 10: Budget (PhP)
-        9,    // Col 11: Strategies
-        7     // Col 12: Remarks
-    ];
+    const colWeights = [9, 9.5, 10.5, 9, 6.5, 9.5, 6.5, 6.5, 7, 9.5, 9, 7];
     const totalWeights = colWeights.reduce((a, b) => a + b, 0);
     const columnStyles = {};
     colWeights.forEach((w, idx) => {
@@ -609,7 +600,7 @@ async function buildAPP_PDF(targetYear = null) {
         columnStyles: columnStyles
     });
 
-    // 6. Signatories Block (Page break if not enough space)
+    // 6. Dynamic Signatories Block
     const pageHeight = doc.internal.pageSize.getHeight();
     let finalY = doc.lastAutoTable.finalY + 12;
 
@@ -619,36 +610,46 @@ async function buildAPP_PDF(targetYear = null) {
     }
 
     doc.setFontSize(7);
+
+    const prepName = (appRecord && appRecord.submitted_by && appRecord.submitted_by.name) ? appRecord.submitted_by.name.toUpperCase() : 'SUPPLY OFFICER II';
+    const prepDate = (appRecord && appRecord.submitted_at) ? new Date(Number(appRecord.submitted_at)).toLocaleDateString() : new Date().toLocaleDateString();
+
+    const ardName = (appRecord && appRecord.ard_approved_by && appRecord.ard_approved_by.name) ? appRecord.ard_approved_by.name.toUpperCase() : 'ASSISTANT REGIONAL DIRECTOR';
+    const ardDate = (appRecord && appRecord.ard_approved_at) ? new Date(Number(appRecord.ard_approved_at)).toLocaleDateString() : '';
+
+    const rdName = (appRecord && appRecord.approved_by && appRecord.approved_by.name) ? appRecord.approved_by.name.toUpperCase() : 'REGIONAL DIRECTOR';
+    const rdDate = (appRecord && appRecord.approved_at) ? new Date(Number(appRecord.approved_at)).toLocaleDateString() : '';
     
-    // Left: Prepared by
-    doc.text('Supply Officer II, DICT X', margin, finalY);
+    // Left: Prepared / Submitted by (Supply Officer)
+    doc.text('Prepared by / Submitted by:', margin, finalY);
     doc.line(margin, finalY + 10, margin + 60, finalY + 10);
     doc.setFont('helvetica', 'bold');
-    doc.text('Name', margin + 30, finalY + 14, { align: 'center' });
+    doc.text(prepName, margin + 30, finalY + 14, { align: 'center' });
     doc.setFont('helvetica', 'normal');
     doc.text('Signature over Printed Name', margin + 30, finalY + 18, { align: 'center' });
-    doc.text('Bids and Awards Committee Secretariat', margin + 30, finalY + 22, { align: 'center' });
-    doc.text('Date: ' + new Date().toLocaleDateString(), margin + 30, finalY + 28, { align: 'center' });
+    doc.text('Supply Officer II / BAC Secretariat', margin + 30, finalY + 22, { align: 'center' });
+    doc.text('Date: ' + prepDate, margin + 30, finalY + 28, { align: 'center' });
 
-    // Center: Certified Funds Available
-    doc.text('Assistant Regional Director, DICT X', pageWidth / 2 - 30, finalY);
+    // Center: Endorsed / Reviewed by (ARD)
+    doc.text('Endorsed by:', pageWidth / 2 - 30, finalY);
     doc.line(pageWidth / 2 - 35, finalY + 10, pageWidth / 2 + 25, finalY + 10);
     doc.setFont('helvetica', 'bold');
-    doc.text('Name', pageWidth / 2 - 5, finalY + 14, { align: 'center' });
+    doc.text(ardName, pageWidth / 2 - 5, finalY + 14, { align: 'center' });
     doc.setFont('helvetica', 'normal');
     doc.text('Signature over Printed Name', pageWidth / 2 - 5, finalY + 18, { align: 'center' });
-    doc.text('Bids and Awards Committee Chairperson', pageWidth / 2 - 5, finalY + 22, { align: 'center' });
+    doc.text('Assistant Regional Director / BAC Chairperson', pageWidth / 2 - 5, finalY + 22, { align: 'center' });
+    if (ardDate) doc.text('Date: ' + ardDate, pageWidth / 2 - 5, finalY + 28, { align: 'center' });
 
-    // Right: Approved by
-    doc.text('Regional Director, DICT X', pageWidth - 70, finalY);
+    // Right: Approved by (RD)
+    doc.text('Approved by:', pageWidth - 70, finalY);
     doc.line(pageWidth - 70, finalY + 10, pageWidth - margin, finalY + 10);
     doc.setFont('helvetica', 'bold');
-    doc.text('Name', pageWidth - 35, finalY + 14, { align: 'center' });
+    doc.text(rdName, pageWidth - 35, finalY + 14, { align: 'center' });
     doc.setFont('helvetica', 'normal');
     doc.text('Signature over Printed Name', pageWidth - 35, finalY + 18, { align: 'center' });
-    doc.text('Head of the Procuring Entity', pageWidth - 35, finalY + 22, { align: 'center' });
+    doc.text('Regional Director / Head of the Procuring Entity', pageWidth - 35, finalY + 22, { align: 'center' });
+    if (rdDate) doc.text('Date: ' + rdDate, pageWidth - 35, finalY + 28, { align: 'center' });
 
-    // 7. Hand the finished document back (saving / previewing is up to the caller)
     return { doc, fiscalYear, fileName: `APP_FY_${fiscalYear}_DICT.pdf` };
 }
 

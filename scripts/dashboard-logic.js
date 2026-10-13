@@ -1196,149 +1196,107 @@ function closeExcelPreview() {
 }
 
 // ============================================================
-// SUPPLIER: GENERATE APP
-// Suppliers get a "Generate APP" link in the sidebar of every page and a
-// prominent button in the Entries page header. Both build the Annual
-// Procurement Plan immediately (generateAPP_PDF in pdf-generator.js).
-// Every other account never sees them. The Export APP buttons inside the
-// request modal (.export-app-btn) follow the same rule - all copies of them,
-// not just the first one that shares the duplicated id.
+// ANNUAL PROCUREMENT PLAN (APP) APPROVAL WORKFLOW
+// Chain: Supply Account (Submit) -> ARD (Approve) -> RD (Approve) -> Final APP
 // ============================================================
 
-const APP_NAV_ICON =
-    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none">' +
-        '<path d="M7 3.5H14L18 7.5V19.5C18 20.05 17.55 20.5 17 20.5H7C6.45 20.5 6 20.05 6 19.5V4.5C6 3.95 6.45 3.5 7 3.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>' +
-        '<path d="M14 3.5V7.5H18" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>' +
-        '<path d="M12 11V16M12 16L9.8 13.8M12 16L14.2 13.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>' +
-    '</svg>';
+const APP_RECORDS_KEY = 'app_records';
 
-let appGenerating = false;
-
-function isSupplierSession() {
-    const session = typeof getSession === 'function' ? getSession() : null;
-    return !!(session && session.role === 'SUP');
-}
-
-// Shows a busy state on every Generate APP trigger while the PDF is built
-// (the label changes too, so the feedback doesn't depend on animation).
-function setAppButtonsBusy(busy) {
-    document.querySelectorAll('[data-generate-app], [data-app-entry-btn]').forEach(function (el) {
-        const label = el.querySelector('.db-app-label');
-        el.classList.toggle('is-loading', busy);
-        el.setAttribute('aria-busy', busy ? 'true' : 'false');
-        if (!label) return;
-        if (busy) {
-            el.dataset.idleLabel = label.textContent;
-            label.textContent = 'Generating\u2026';
-        } else if (el.dataset.idleLabel) {
-            label.textContent = el.dataset.idleLabel;
-        }
-    });
-}
-
-// One entry point for the sidebar link and the Entries button.
-async function runGenerateApp() {
-    if (appGenerating) return;
-
-    if (!isSupplierSession()) {
-        showToast('Only Suppliers can generate the Annual Procurement Plan.');
-        return;
-    }
-    if (typeof generateAPP_PDF !== 'function') {
-        showToast('The PDF generator is not available on this page.');
-        return;
-    }
-
-    appGenerating = true;
-    setAppButtonsBusy(true);
+function getAllAppRecords() {
     try {
-        await generateAPP_PDF();
-    } catch (err) {
-        console.error('APP generation failed:', err);
-        showToast('The APP could not be generated. Please try again.');
-    } finally {
-        appGenerating = false;
-        setAppButtonsBusy(false);
+        const records = JSON.parse(localStorage.getItem(APP_RECORDS_KEY));
+        return Array.isArray(records) ? records : [];
+    } catch (e) {
+        return [];
     }
+}
+
+function getAppRecord(fiscalYear) {
+    const all = getAllAppRecords();
+    const strYear = String(fiscalYear || new Date().getFullYear());
+    let record = all.find(r => String(r.fiscal_year) === strYear);
+
+    if (!record) {
+        record = {
+            id: 'app_' + strYear,
+            fiscal_year: strYear,
+            status: 'Draft',
+            currentApproverRole: null, // 'ARD' -> 'RD' -> 'None'
+            submitted_by: null,
+            submitted_at: null,
+            ard_approved_by: null,
+            ard_approved_at: null,
+            approved_by: null,
+            approved_at: null,
+            returned_for_revision: false,
+            rejected_by: null,
+            rejected_at: null,
+            remarksHistory: []
+        };
+    }
+    return record;
+}
+
+function saveAppRecord(record) {
+    const all = getAllAppRecords();
+    const idx = all.findIndex(r => String(r.fiscal_year) === String(record.fiscal_year));
+    if (idx !== -1) {
+        all[idx] = record;
+    } else {
+        all.push(record);
+    }
+    try {
+        localStorage.setItem(APP_RECORDS_KEY, JSON.stringify(all));
+    } catch (e) {
+        console.error('Could not save APP record:', e);
+    }
+}
+
+function isAppPendingForUser(session) {
+    if (!session) return false;
+    const all = getAllAppRecords();
+    return all.some(r => r.status === 'For Approval' && r.currentApproverRole === session.role);
 }
 
 // ------------------------------------------------------------
-// Preview APP: builds the same PDF as Generate APP, but shows it in a
-// dialog first (with Download / Open in new tab) instead of downloading.
+// APP PREVIEW MODAL WITH APPROVAL CONTROLS
 // ------------------------------------------------------------
 
 let appPreviewEl = null;
 let appPreviewUrl = null;
-let appPreviewPrevFocus = null;
-
-function setAppPreviewBusy(busy) {
-    document.querySelectorAll('[data-app-preview-btn]').forEach(function (el) {
-        const label = el.querySelector('.db-app-label');
-        el.classList.toggle('is-loading', busy);
-        el.setAttribute('aria-busy', busy ? 'true' : 'false');
-        if (!label) return;
-        if (busy) {
-            el.dataset.idleLabel = label.textContent;
-            label.textContent = 'Preparing\u2026';
-        } else if (el.dataset.idleLabel) {
-            label.textContent = el.dataset.idleLabel;
-        }
-    });
-}
-
-async function runPreviewApp() {
-    if (appGenerating) return;
-
-    if (!isSupplierSession()) {
-        showToast('Only Suppliers can preview the Annual Procurement Plan.');
-        return;
-    }
-    if (typeof previewAPP_PDF !== 'function') {
-        showToast('The PDF generator is not available on this page.');
-        return;
-    }
-
-    appGenerating = true;
-    setAppPreviewBusy(true);
-    try {
-        const result = await previewAPP_PDF();
-        if (result) openAppPreviewModal(result);
-    } catch (err) {
-        console.error('APP preview failed:', err);
-        showToast('The APP preview could not be prepared. Please try again.');
-    } finally {
-        appGenerating = false;
-        setAppPreviewBusy(false);
-    }
-}
+let appPreviewYear = null;
+let appGenerating = false;
 
 function buildAppPreviewModal() {
     const overlay = document.createElement('div');
     overlay.className = 'app-preview-overlay';
     overlay.id = 'appPreviewOverlay';
-    overlay.innerHTML =
-        '<div class="app-preview-modal" role="dialog" aria-modal="true" aria-labelledby="appPreviewTitle">' +
-            '<div class="app-preview-head">' +
-                '<h3 id="appPreviewTitle">Annual Procurement Plan Preview</h3>' +
-                '<button type="button" class="app-preview-x" data-app-preview-close aria-label="Close preview">&times;</button>' +
-            '</div>' +
-            '<div class="app-preview-body">' +
-                '<iframe id="appPreviewFrame" class="app-preview-frame" title="Annual Procurement Plan preview"></iframe>' +
-                '<p class="app-preview-fallback">If the preview does not show on this device, use <strong>Open in new tab</strong>.</p>' +
-            '</div>' +
-            '<div class="app-preview-actions">' +
-                '<button type="button" class="app-preview-btn is-secondary" data-app-preview-close>Close</button>' +
-                '<span class="app-preview-spacer"></span>' +
-                '<button type="button" class="app-preview-btn" data-app-preview-open>Open in new tab</button>' +
-            '</div>' +
-        '</div>';
+    overlay.innerHTML = `
+        <div class="app-preview-modal" role="dialog" aria-modal="true" aria-labelledby="appPreviewTitle">
+            <div class="app-preview-head">
+                <div>
+                    <h3 id="appPreviewTitle">Annual Procurement Plan Preview</h3>
+                    <div id="appModalStatusWrap" style="margin-top: 4px;"></div>
+                </div>
+                <button type="button" class="app-preview-x" data-app-preview-close aria-label="Close preview">&times;</button>
+            </div>
+            <div id="appRejectionBanner" style="display: none; padding: 10px 16px; background-color: #fef2f2; border-bottom: 1px solid #fee2e2; color: #991b1b; font-size: 12.5px;"></div>
+            <div class="app-preview-body">
+                <iframe id="appPreviewFrame" class="app-preview-frame" title="Annual Procurement Plan preview"></iframe>
+            </div>
+            <div class="app-preview-actions">
+                <button type="button" class="app-preview-btn is-secondary" data-app-preview-close>Close</button>
+                <button type="button" class="app-preview-btn is-secondary" data-app-preview-open>Open in new tab</button>
+                <span class="app-preview-spacer"></span>
+                <div id="appWorkflowActions"></div>
+            </div>
+        </div>
+    `;
 
     overlay.addEventListener('click', function (e) {
         if (e.target === overlay) closeAppPreviewModal();
     });
-    overlay.querySelectorAll('[data-app-preview-close]').forEach(function (b) {
-        b.addEventListener('click', closeAppPreviewModal);
-    });
+    overlay.querySelectorAll('[data-app-preview-close]').forEach(b => b.addEventListener('click', closeAppPreviewModal));
     overlay.querySelector('[data-app-preview-open]').addEventListener('click', function () {
         if (appPreviewUrl) window.open(appPreviewUrl, '_blank', 'noopener');
     });
@@ -1347,87 +1305,374 @@ function buildAppPreviewModal() {
     return overlay;
 }
 
-function onAppPreviewKeydown(e) {
-    if (e.key === 'Escape' && appPreviewEl && appPreviewEl.classList.contains('show')) {
-        e.preventDefault();
-        closeAppPreviewModal();
-    }
-}
-
 function openAppPreviewModal(result) {
     if (!appPreviewEl) appPreviewEl = buildAppPreviewModal();
 
-    // Drop any previous preview before showing the new one.
     if (appPreviewUrl) URL.revokeObjectURL(appPreviewUrl);
     appPreviewUrl = URL.createObjectURL(result.blob);
+    appPreviewYear = result.fiscalYear;
 
-    appPreviewEl.querySelector('#appPreviewTitle').textContent =
-        'Annual Procurement Plan Preview \u2014 FY ' + result.fiscalYear;
+    const record = getAppRecord(result.fiscalYear);
+    const session = typeof getSession === 'function' ? getSession() : null;
+
+    appPreviewEl.querySelector('#appPreviewTitle').textContent = `Annual Procurement Plan (APP) — FY ${result.fiscalYear}`;
     appPreviewEl.querySelector('#appPreviewFrame').src = appPreviewUrl + '#view=FitH';
 
-    appPreviewPrevFocus = document.activeElement;
+    renderAppWorkflowUi(record, session);
+
     appPreviewEl.classList.add('show');
     document.body.style.overflow = 'hidden';
-    document.addEventListener('keydown', onAppPreviewKeydown);
-    appPreviewEl.querySelector('[data-app-preview-open]').focus();
 }
 
 function closeAppPreviewModal() {
     if (!appPreviewEl) return;
     appPreviewEl.classList.remove('show');
     document.body.style.overflow = '';
-    document.removeEventListener('keydown', onAppPreviewKeydown);
 
     appPreviewEl.querySelector('#appPreviewFrame').src = 'about:blank';
     if (appPreviewUrl) {
         URL.revokeObjectURL(appPreviewUrl);
         appPreviewUrl = null;
     }
-    if (appPreviewPrevFocus && typeof appPreviewPrevFocus.focus === 'function') {
-        appPreviewPrevFocus.focus();
+}
+
+// Renders the approval status pill, rejection remarks banner, and action buttons
+function renderAppWorkflowUi(record, session) {
+    const statusWrap = document.getElementById('appModalStatusWrap');
+    const banner = document.getElementById('appRejectionBanner');
+    const actionsWrap = document.getElementById('appWorkflowActions');
+    if (!statusWrap || !actionsWrap || !banner) return;
+
+    let statusPill = '';
+    if (record.status === 'Completed') {
+        statusPill = '<span class="db-status-pill is-completed">Final (Fully Approved)</span>';
+    } else if (record.status === 'For Approval') {
+        const waitingFor = record.currentApproverRole === 'ARD' ? 'Assistant Regional Director' : 'Regional Director';
+        statusPill = `<span class="db-status-pill is-pending">For Approval · With ${waitingFor}</span>`;
+    } else if (record.returned_for_revision) {
+        statusPill = '<span class="db-status-pill is-returned">Returned for Revision</span>';
+    } else {
+        statusPill = '<span class="db-status-pill is-draft">Draft (Indicative)</span>';
+    }
+    statusWrap.innerHTML = statusPill;
+
+    // Show rejection banner if returned
+    if (record.returned_for_revision && record.rejected_by) {
+        const lastReject = (record.remarksHistory || []).slice().reverse().find(h => h.action === 'rejected');
+        banner.style.display = 'block';
+        banner.innerHTML = `
+            <strong>Returned for revision by ${escapeHtml(record.rejected_by.name)}:</strong>
+            <span>${escapeHtml(lastReject ? lastReject.remarks : 'Please revise.')}</span>
+        `;
+    } else {
+        banner.style.display = 'none';
+    }
+
+    // Context-sensitive workflow buttons
+    let buttonsHtml = '';
+    const isSupplier = session && session.role === 'SUP';
+    const isArd = session && session.role === 'ARD';
+    const isRd = session && session.role === 'RD';
+
+    if (isSupplier && (record.status === 'Draft' || record.returned_for_revision)) {
+        buttonsHtml = `<button type="button" class="app-preview-btn" onclick="submitAppForApproval('${record.fiscal_year}')" style="background-color: #2563eb; color: #fff;">Submit APP for Approval</button>`;
+    } else if (isArd && record.status === 'For Approval' && record.currentApproverRole === 'ARD') {
+        buttonsHtml = `<button type="button" class="app-preview-btn" onclick="openAppReviewDialog('${record.fiscal_year}')" style="background-color: #2563eb; color: #fff;">Review & Decide →</button>`;
+    } else if (isRd && record.status === 'For Approval' && record.currentApproverRole === 'RD') {
+        buttonsHtml = `<button type="button" class="app-preview-btn" onclick="openAppReviewDialog('${record.fiscal_year}')" style="background-color: #2563eb; color: #fff;">Review & Final Approve →</button>`;
+    } else if (record.status === 'Completed') {
+        buttonsHtml = `<button type="button" class="app-preview-btn" onclick="generateAPP_PDF('${record.fiscal_year}')" style="background-color: #10b981; color: #fff;">Download Final APP (PDF)</button>`;
+    }
+
+    actionsWrap.innerHTML = buttonsHtml;
+}
+
+// ------------------------------------------------------------
+// WORKFLOW ACTIONS: SUBMIT, REVIEW, APPROVE, REJECT
+// ------------------------------------------------------------
+
+function submitAppForApproval(fiscalYear) {
+    const session = typeof getSession === 'function' ? getSession() : null;
+    if (!session || session.role !== 'SUP') {
+        showToast('Only the Supply Account can submit the APP for approval.');
+        return;
+    }
+
+    if (!confirm(`Submit the Annual Procurement Plan for FY ${fiscalYear} to the Assistant Regional Director (ARD) for review?`)) return;
+
+    const record = getAppRecord(fiscalYear);
+    record.status = 'For Approval';
+    record.currentApproverRole = 'ARD';
+    record.returned_for_revision = false;
+    record.submitted_by = { name: session.roleName, role: session.role, email: session.email };
+    record.submitted_at = Date.now();
+
+    if (!Array.isArray(record.remarksHistory)) record.remarksHistory = [];
+    record.remarksHistory.push({
+        stage: 'SUP',
+        role: session.role,
+        name: session.roleName,
+        action: 'submitted',
+        remarks: 'Submitted by Supply Account for ARD endorsement.',
+        date: new Date().toLocaleDateString(),
+        at: Date.now()
+    });
+
+    saveAppRecord(record);
+    showToast(`APP for FY ${fiscalYear} submitted to the ARD for review.`);
+    runPreviewApp();
+    renderAppExportButton();
+}
+
+let appReviewDialogEl = null;
+
+function buildAppReviewDialog() {
+    const overlay = document.createElement('div');
+    overlay.className = 'logout-overlay';
+    overlay.id = 'appReviewOverlay';
+    overlay.innerHTML = `
+        <div class="logout-modal review-modal" role="alertdialog" aria-modal="true" aria-labelledby="appReviewTitle">
+            <div class="logout-icon is-approve">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none"><path d="M5 12.5l4.5 4.5L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3 id="appReviewTitle">Review Annual Procurement Plan</h3>
+            <p id="appReviewDesc"></p>
+            <div class="review-field" id="appReviewRemarksField">
+                <label for="appReviewRemarks">Remarks</label>
+                <textarea id="appReviewRemarks" maxlength="1000" placeholder="Enter review notes, corrections, or approval remarks..."></textarea>
+                <p class="review-error">Remarks are required to reject or add remarks.</p>
+            </div>
+            <div class="review-actions">
+                <button type="button" class="logout-cancel-btn" data-app-review-cancel>Cancel</button>
+                <button type="button" class="logout-cancel-btn" data-app-review-comment>Add remark only</button>
+                <button type="button" class="logout-confirm-btn is-reject" data-app-review-reject>Reject</button>
+                <button type="button" class="logout-confirm-btn is-approve" data-app-review-approve>Approve</button>
+            </div>
+        </div>
+    `;
+
+    overlay.querySelector('[data-app-review-cancel]').addEventListener('click', closeAppReviewDialog);
+    document.body.appendChild(overlay);
+    return overlay;
+}
+
+function openAppReviewDialog(fiscalYear) {
+    if (!appReviewDialogEl) appReviewDialogEl = buildAppReviewDialog();
+
+    const record = getAppRecord(fiscalYear);
+    const session = typeof getSession === 'function' ? getSession() : null;
+    const isArd = session && session.role === 'ARD';
+
+    document.getElementById('appReviewTitle').textContent = `Review APP FY ${fiscalYear}`;
+    document.getElementById('appReviewDesc').textContent = isArd
+        ? 'Approve to endorse this APP and forward it to the Regional Director (RD). Reject returns it to the Supply Account for revision.'
+        : 'Approve will grant final approval, finalizing the APP for official release. Reject returns it to the Supply Account for revision.';
+
+    const box = document.getElementById('appReviewRemarks');
+    box.value = '';
+    document.getElementById('appReviewRemarksField').classList.remove('has-error');
+
+    appReviewDialogEl.querySelector('[data-app-review-comment]').onclick = () => performAppReviewAction(fiscalYear, 'comment');
+    appReviewDialogEl.querySelector('[data-app-review-reject]').onclick = () => performAppReviewAction(fiscalYear, 'reject');
+    appReviewDialogEl.querySelector('[data-app-review-approve]').onclick = () => performAppReviewAction(fiscalYear, 'approve');
+
+    appReviewDialogEl.classList.add('show');
+    box.focus();
+}
+
+function closeAppReviewDialog() {
+    if (appReviewDialogEl) appReviewDialogEl.classList.remove('show');
+}
+
+function performAppReviewAction(fiscalYear, action) {
+    const box = document.getElementById('appReviewRemarks');
+    const field = document.getElementById('appReviewRemarksField');
+    const remarks = box ? box.value.trim() : '';
+
+    if (action !== 'approve' && !remarks) {
+        if (field) field.classList.add('has-error');
+        if (box) box.focus();
+        return;
+    }
+
+    closeAppReviewDialog();
+
+    const session = typeof getSession === 'function' ? getSession() : null;
+    const record = getAppRecord(fiscalYear);
+    const isArd = session && session.role === 'ARD';
+    let message = '';
+
+    if (!Array.isArray(record.remarksHistory)) record.remarksHistory = [];
+    record.remarksHistory.push({
+        stage: session.role,
+        role: session.role,
+        name: session.roleName,
+        action: action,
+        remarks: remarks || 'Approved.',
+        date: new Date().toLocaleDateString(),
+        at: Date.now()
+    });
+
+    if (action === 'comment') {
+        message = `Remark added to APP FY ${fiscalYear}.`;
+    } else if (action === 'reject') {
+        record.status = 'Draft';
+        record.currentApproverRole = null;
+        record.returned_for_revision = true;
+        record.rejected_at = Date.now();
+        record.rejected_by = { name: session.roleName, role: session.role, email: session.email };
+        message = `APP FY ${fiscalYear} rejected and returned to the Supply Account.`;
+    } else {
+        // Approve
+        if (isArd) {
+            record.currentApproverRole = 'RD';
+            record.ard_approved_by = { name: session.roleName, role: session.role, email: session.email };
+            record.ard_approved_at = Date.now();
+            message = `APP FY ${fiscalYear} endorsed by ARD and forwarded to Regional Director (RD).`;
+        } else {
+            record.status = 'Completed';
+            record.currentApproverRole = 'None';
+            record.returned_for_revision = false;
+            record.approved_by = { name: session.roleName, role: session.role, email: session.email };
+            record.approved_at = Date.now();
+            message = `APP FY ${fiscalYear} fully approved and marked Final by Regional Director.`;
+        }
+    }
+
+    saveAppRecord(record);
+    showToast(message);
+    runPreviewApp();
+    renderAppExportButton();
+}
+
+// ------------------------------------------------------------
+// ENTRY POINT & BUTTON VISIBILITY
+// ------------------------------------------------------------
+
+async function runPreviewApp() {
+    if (appGenerating) return;
+
+    if (typeof previewAPP_PDF !== 'function') {
+        showToast('The PDF generator is not available on this page.');
+        return;
+    }
+
+    appGenerating = true;
+    try {
+        const result = await previewAPP_PDF();
+        if (result) openAppPreviewModal(result);
+    } catch (err) {
+        console.error('APP preview failed:', err);
+        showToast('The APP preview could not be prepared.');
+    } finally {
+        appGenerating = false;
     }
 }
 
-// Adds the "Generate APP" link to the sidebar, right under Entries.
-function addGenerateAppNavItem() {
-    document.querySelectorAll('.db-nav').forEach(function (nav) {
-        if (nav.querySelector('[data-generate-app]')) return;
+async function runGenerateApp() {
+    const session = typeof getSession === 'function' ? getSession() : null;
+    const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const approved = records.filter(r => r.status === 'Completed');
+    const year = approved[0] ? approved[0].fiscal_year : new Date().getFullYear();
+    const appRec = getAppRecord(year);
 
-        const link = document.createElement('a');
-        link.href = '#';
-        link.className = 'db-nav-item db-nav-app';
-        link.setAttribute('data-generate-app', '');
-        link.setAttribute('role', 'button');
-        link.title = 'Generate the Annual Procurement Plan from all approved PPMPs';
-        link.innerHTML = APP_NAV_ICON + '<span class="db-app-label">Generate APP</span>';
-        link.addEventListener('click', function (e) {
-            e.preventDefault();
-            runGenerateApp();
-        });
+    // If not yet fully approved, opening the preview modal shows review state
+    if (appRec.status !== 'Completed') {
+        runPreviewApp();
+        return;
+    }
 
-        const entriesLink = nav.querySelector('a[href="entries.html"]');
-        if (entriesLink) {
-            entriesLink.after(link);
-        } else {
-            nav.appendChild(link);
+    if (typeof generateAPP_PDF === 'function') {
+        generateAPP_PDF(year);
+    }
+}
+
+// Shows the APP button for SUP, ARD, and RD
+// Shows a single unified APP button for SUP, ARD, and RD matching general button styling
+function renderAppExportButton() {
+    const session = typeof getSession === 'function' ? getSession() : null;
+    const authorized = session && ['SUP', 'ARD', 'RD'].includes(session.role);
+
+    // Find all APP buttons that might exist in the page
+    const buttons = Array.from(document.querySelectorAll('#exportAppPdfBtn, .export-app-btn, [data-app-entry-btn], [data-app-preview-btn]'));
+
+    if (!authorized || buttons.length === 0) {
+        buttons.forEach(btn => btn.style.display = 'none');
+        return;
+    }
+
+    // Hide any duplicates and keep ONLY the first button
+    buttons.forEach((btn, idx) => {
+        if (idx > 0) {
+            btn.style.display = 'none';
         }
     });
+
+    const primaryBtn = buttons[0];
+    primaryBtn.style.display = 'inline-flex';
+
+    // Remove foreign inline styles so native CSS classes take effect
+    primaryBtn.style.backgroundColor = '';
+    primaryBtn.style.color = '';
+    primaryBtn.style.border = '';
+
+    // Ensure it uses the app's native button classes
+    if (!primaryBtn.classList.contains('db-btn')) {
+        primaryBtn.className = 'db-btn is-primary export-app-btn';
+    }
+
+    // Get current APP status for the label
+    const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const approved = records.filter(r => r.status === 'Completed');
+    const year = approved[0] ? approved[0].fiscal_year : new Date().getFullYear();
+    const appRec = getAppRecord(year);
+
+    let labelText = `Annual Procurement Plan (APP)`;
+    let isActionNeeded = false;
+
+    if (session.role === 'ARD' && appRec.status === 'For Approval' && appRec.currentApproverRole === 'ARD') {
+        labelText = `Review APP FY ${year} (Action Needed)`;
+        isActionNeeded = true;
+    } else if (session.role === 'RD' && appRec.status === 'For Approval' && appRec.currentApproverRole === 'RD') {
+        labelText = `Review APP FY ${year} (Final Action)`;
+        isActionNeeded = true;
+    } else if (appRec.status === 'Completed') {
+        labelText = `Final APP FY ${year} (Approved)`;
+    } else if (appRec.status === 'For Approval') {
+        labelText = `APP FY ${year} (In Review)`;
+    } else if (appRec.returned_for_revision) {
+        labelText = `APP FY ${year} (Returned)`;
+    }
+
+    // Render clean layout: Icon + Label (without destroying the SVG icon)
+    primaryBtn.innerHTML = `
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+        </svg>
+        <span class="db-app-label">${labelText}</span>
+    `;
+
+    primaryBtn.onclick = function (e) {
+        e.preventDefault();
+        runPreviewApp();
+    };
+
+    // Update notification dot on the bell icon for pending ARD / RD actions
+    const notifDot = document.getElementById('notifDot');
+    if (notifDot && session) {
+        const hasPendingPpmp = (typeof getRecords === 'function') ? getRecords().some(canSessionActOnRecord) : false;
+        const hasPendingApp = isAppPendingForUser(session);
+        notifDot.classList.toggle('hidden', !hasPendingPpmp && !hasPendingApp);
+    }
 }
 
-function renderAppExportButton() {
-    const supplier = isSupplierSession();
-
-    // Entries header buttons (Preview APP + Generate APP) + every Export APP
-    // button in the request modal.
-    document.querySelectorAll('.export-app-btn, [data-app-entry-btn], [data-app-preview-btn]').forEach(function (btn) {
-        btn.style.display = supplier ? 'inline-flex' : 'none';
-    });
-
-    // The sidebar "Generate APP" link is intentionally no longer added for
-    // Suppliers. They still generate the APP from the Entries page header
-    // button and the Export APP buttons in the request modal.
-    // (addGenerateAppNavItem() is kept above in case it is needed again.)
-}
+document.addEventListener('DOMContentLoaded', function () {
+    renderAppExportButton();
+});
 
 document.addEventListener('DOMContentLoaded', function () {
     renderAppExportButton();
