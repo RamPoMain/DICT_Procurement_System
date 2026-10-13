@@ -296,13 +296,14 @@
         item.budget = budget ? budget.text : '';
 
         // Same mode/budget bracket rule as the form (request-modal.js).
-        if (budget && mode && typeof MODE_BUDGET_BRACKETS !== 'undefined' && typeof getRecommendedMode === 'function') {
-            var isBracketMode = MODE_BUDGET_BRACKETS.some(function (tier) { return tier.mode === mode; });
-            if (isBracketMode) {
-                var recommended = getRecommendedMode(budget.number);
-                if (recommended.mode !== mode) {
-                    errors.push('Budget of ' + pesoText(budget.number) + ' is in the ' + recommended.label +
-                        ' bracket, which requires "' + recommended.mode + '".');
+        // RA 12009 Sec 7.7.2 (d) validation for bulk import
+        if (budget && mode && typeof PROCUREMENT_MODE_RULES !== 'undefined') {
+            var rule = PROCUREMENT_MODE_RULES[mode];
+            if (rule) {
+                if (type && rule.allowedTypes && rule.allowedTypes.indexOf(type) === -1) {
+                    errors.push('Mode "' + mode + '" is restricted to ' + rule.allowedTypes.join(', ') + ' under ' + rule.legalBasis + '.');
+                } else if (budget.number > rule.maxBudget) {
+                    errors.push('Budget of ' + pesoText(budget.number) + ' exceeds the allowable limit of ' + pesoText(rule.maxBudget) + ' for ' + mode + ' (' + rule.legalBasis + ').');
                 }
             }
         }

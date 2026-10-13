@@ -485,14 +485,16 @@ const PREVIEW_CRITERIA_OPTIONS = [
     'Lowest Calculated Responsive Bid (LCRB)',
     'Most Economically Advantageous Responsive Bid (MEARB)',
     'Most Advantageous Responsive Bid (MARB) / HRRB / SRRB',
-    'Lowest Comparative or Competitive Responsive Bid (LCCRB)'
+    'Lowest Comparative or Competitive Responsive Bid (LCCRB)',
+    'N/A'
 ];
 
 const PREVIEW_STRATEGY_OPTIONS = [
     'Life Cycle Assessment (LCA) and LCCA', 'Subcontracting', 'Multi-Year Contracting',
     'Design-and-Build Scheme for Infrastructure', 'Engagement of a Procurement Agent',
     'Use of Framework Agreement Section', 'Pooled Procurement Section 17',
-    'Renewal of Regular and Recurring Services', 'Warehousing and Inventory Activities'
+    'Renewal of Regular and Recurring Services', 'Warehousing and Inventory Activities',
+    'N/A'
 ];
 
 function blankPreviewItem() {
@@ -1597,8 +1599,29 @@ function onPreviewStrategyToggle(checkbox) {
     const item = draft.items.find(it => it.id == itemId);
     if (!item) return;
 
-    const current = new Set(Array.isArray(item.strategies) ? item.strategies : []);
-    if (checkbox.checked) current.add(checkbox.value); else current.delete(checkbox.value);
+    let current = new Set(Array.isArray(item.strategies) ? item.strategies : []);
+    const val = checkbox.value;
+
+    if (val === 'N/A') {
+        if (checkbox.checked) {
+            document.querySelectorAll(`.ep-strategies-box[data-record-id="${recordId}"][data-item-id="${itemId}"] input[type="checkbox"]`).forEach(cb => {
+                if (cb.value !== 'N/A') cb.checked = false;
+            });
+            current = new Set(['N/A']);
+        } else {
+            current.delete('N/A');
+        }
+    } else {
+        if (checkbox.checked) {
+            const naCb = document.querySelector(`.ep-strategies-box[data-record-id="${recordId}"][data-item-id="${itemId}"] input[value="N/A"]`);
+            if (naCb) naCb.checked = false;
+            current.delete('N/A');
+            current.add(val);
+        } else {
+            current.delete(val);
+        }
+    }
+
     item.strategies = Array.from(current);
     updatePreviewDirtyIndicator(recordId);
 
@@ -1661,7 +1684,9 @@ const PREVIEW_ALL_FIELDS = [
 // When one field changes, these others may become right or wrong too.
 const PREVIEW_FIELD_DEPENDENTS = {
     budget: ['budget', 'mode'],
-    mode: ['mode', 'budget'],
+    mode: ['mode', 'budget', 'project_type', 'project_description'],
+    project_type: ['project_type', 'mode'],
+    project_description: ['project_description', 'mode'],
     start_date: ['start_date', 'end_date', 'delivery_period'],
     end_date: ['end_date', 'delivery_period'],
     delivery_period: ['end_date', 'delivery_period']
@@ -1735,22 +1760,32 @@ function validatePreviewItem(item) {
     else if (text('fund_source').length < 2) errors.fund_source = 'Please provide a valid fund source.';
 
     // Budget: a real number above zero, and consistent with the mode.
+    const modeVal = text('mode');
+    const projType = text('project_type');
     const budgetRaw = text('budget');
     const budgetNumber = parsePreviewBudget(budgetRaw);
-    if (!budgetRaw) errors.budget = 'Estimated budget is required.';
-    else if (isNaN(budgetNumber)) errors.budget = 'Budget must contain a valid number.';
-    else if (budgetNumber <= 0) errors.budget = 'Budget must be greater than 0.';
 
-    if (!errors.mode && !errors.budget && text('mode') && budgetRaw) {
-        const brackets = (typeof MODE_BUDGET_BRACKETS !== 'undefined') ? MODE_BUDGET_BRACKETS : PREVIEW_FALLBACK_BRACKETS;
-        const isBracketMode = brackets.some(tier => tier.mode === text('mode'));
-        if (isBracketMode) {
-            const recommended = brackets.find(tier => budgetNumber <= tier.max) || brackets[brackets.length - 1];
-            if (recommended.mode !== text('mode')) {
-                const message = 'A budget of \u20B1' + budgetNumber.toLocaleString('en-PH', { maximumFractionDigits: 2 }) +
-                    ' falls in the ' + recommended.label + ' bracket, which requires "' + recommended.mode + '".';
-                errors.mode = message;
-                errors.budget = message;
+    if (modeVal && !isNaN(budgetNumber) && budgetNumber > 0) {
+        const rules = (typeof PROCUREMENT_MODE_RULES !== 'undefined') ? PROCUREMENT_MODE_RULES : null;
+        const rule = rules ? rules[modeVal] : null;
+
+        if (rule) {
+            // Project type check
+            if (projType && rule.allowedTypes && !rule.allowedTypes.includes(projType)) {
+                errors.mode = `"${modeVal}" under ${rule.legalBasis} is restricted to ${rule.allowedTypes.join(' / ')}.`;
+            }
+            // Budget threshold check
+            else if (budgetNumber > rule.maxBudget) {
+                if (modeVal === 'Direct Acquisition') {
+                    errors.mode = `Budget exceeds ₱200,000.00 ceiling for Direct Acquisition (RA 12009 Sec. 32).`;
+                    errors.budget = errors.mode;
+                } else if (modeVal === 'Small Value Procurement (SVP)') {
+                    errors.mode = `Budget exceeds ₱2,000,000.00 ceiling for SVP (RA 12009 Sec. 31). Requires Competitive Bidding.`;
+                    errors.budget = errors.mode;
+                } else if (modeVal === 'Shopping') {
+                    errors.mode = `Budget exceeds ₱2,000,000.00 ceiling for Shopping (RA 12009 Sec. 30).`;
+                    errors.budget = errors.mode;
+                }
             }
         }
     }

@@ -557,77 +557,61 @@ function removeStrategy(strategy) {
 
 
 function initializeStrategies() {
+    ensureStrategyNaOption();
 
-    const trigger =
-        document.getElementById('strategiesTrigger');
-
-    const menu =
-        document.getElementById('strategiesMenu');
-
-    const tagsContainer =
-        document.getElementById('selectedTags');
+    const trigger = document.getElementById('strategiesTrigger');
+    const menu = document.getElementById('strategiesMenu');
+    const tagsContainer = document.getElementById('selectedTags');
 
     if (!trigger || !menu) return;
 
-    const options =
-        document.querySelectorAll('.option');
-
+    const options = menu.querySelectorAll('.option');
 
     // Open / close menu
     trigger.onclick = function (event) {
-
         event.stopPropagation();
-
         menu.classList.toggle('hidden');
     };
 
-
     // Strategy options
     options.forEach(option => {
-
         option.onclick = function (event) {
-
             event.stopPropagation();
+            const text = this.innerText.trim();
 
-            const text =
-                this.innerText.trim();
-
-            this.classList.toggle('selected');
-
-
-            if (this.classList.contains('selected')) {
-
-                if (
-                    !selectedStrategies.includes(text)
-                ) {
-                    selectedStrategies.push(text);
+            if (text === 'N/A') {
+                if (this.classList.contains('selected')) {
+                    this.classList.remove('selected');
+                    selectedStrategies = [];
+                } else {
+                    // Selecting N/A clears all other strategies
+                    options.forEach(opt => opt.classList.remove('selected'));
+                    this.classList.add('selected');
+                    selectedStrategies = ['N/A'];
                 }
-
             } else {
+                // Selecting any other strategy unchecks N/A
+                const naOpt = Array.from(options).find(opt => opt.innerText.trim() === 'N/A');
+                if (naOpt) naOpt.classList.remove('selected');
+                selectedStrategies = selectedStrategies.filter(s => s !== 'N/A');
 
-                selectedStrategies =
-                    selectedStrategies.filter(
-                        item => item !== text
-                    );
+                this.classList.toggle('selected');
+                if (this.classList.contains('selected')) {
+                    if (!selectedStrategies.includes(text)) selectedStrategies.push(text);
+                } else {
+                    selectedStrategies = selectedStrategies.filter(item => item !== text);
+                }
             }
-
 
             renderTags(tagsContainer);
 
-
             if (selectedStrategies.length > 0) {
-
-                clearFieldError(
-                    'procurement_strategies'
-                );
+                clearFieldError('procurement_strategies');
             }
         };
     });
 
-
-    // Close menu when clicking outside
     document.addEventListener('click', function () {
-
         menu.classList.add('hidden');
     });
 }
@@ -1285,39 +1269,236 @@ function validateIndividualField(fieldGroup) {
     return true;
 }
 
+// ============================================================
+// DYNAMIC N/A OPTIONS INJECTION
+// Ensures "N/A" is available in Criteria and Strategies even if missing in HTML
+// ============================================================
+
+function ensureCriteriaNaOption() {
+    const select = document.getElementById('bid_evaluation_criteria');
+    if (!select) return;
+    const exists = Array.from(select.options).some(opt => opt.value === 'N/A');
+    if (!exists) {
+        const opt = document.createElement('option');
+        opt.value = 'N/A';
+        opt.textContent = 'N/A';
+        select.appendChild(opt);
+    }
+}
+
+function ensureStrategyNaOption() {
+    const menu = document.getElementById('strategiesMenu');
+    if (!menu) return;
+    const options = Array.from(menu.querySelectorAll('.option'));
+    const hasNa = options.some(opt => opt.textContent.trim() === 'N/A');
+    if (!hasNa) {
+        const naDiv = document.createElement('div');
+        naDiv.className = 'option';
+        naDiv.textContent = 'N/A';
+        menu.appendChild(naDiv);
+    }
+}
+
+// ============================================================
+// LIVE MODE VS. PROJECT TYPE & GENERAL DESCRIPTION VALIDATION
+// Runs on Step 1 without waiting for Budget
+// ============================================================
+
+function validateModeTypeMatch() {
+    const modeSelect = document.getElementById('modeOfProcurement');
+    const typeSelect = document.getElementById('project_type');
+    const descInput = document.getElementById('project_description');
+
+    if (!modeSelect) return true;
+    const modeValue = modeSelect.value.trim();
+    if (!modeValue) {
+        clearFieldError('modeOfProcurement');
+        return true;
+    }
+
+    const projectType = typeSelect ? typeSelect.value.trim() : '';
+    const description = descInput ? descInput.value.trim().toLowerCase() : '';
+
+    const rule = (typeof PROCUREMENT_MODE_RULES !== 'undefined') ? PROCUREMENT_MODE_RULES[modeValue] : null;
+
+    // 1. Check selected Project Type (Shopping and Repeat Order are restricted to Goods)
+    if (rule && rule.allowedTypes && projectType) {
+        if (!rule.allowedTypes.includes(projectType)) {
+            const typeMsg = `"${modeValue}" under ${rule.legalBasis} is restricted to ${rule.allowedTypes.join(' / ')}. It cannot be used for "${projectType}".`;
+            showFieldError('modeOfProcurement', typeMsg);
+            return false;
+        }
+    }
+
+    // 2. Check General Description for non-goods indicators when Shopping / Repeat Order is selected
+    if (modeValue === 'Shopping' || modeValue === 'Repeat Order') {
+        const nonGoodsKeywords = [
+            'consulting', 'consultant', 'consultancy', 'civil work',
+            'construction', 'renovation', 'repair of building',
+            'infrastructure', 'architectural', 'engineering design'
+        ];
+        const matched = nonGoodsKeywords.find(kw => description.includes(kw));
+        if (matched) {
+            const descMsg = `"${modeValue}" under RA 12009 is strictly for Goods (ordinary office supplies and off-the-shelf items). The General Description specifies non-goods ("${matched}").`;
+            showFieldError('modeOfProcurement', descMsg);
+            return false;
+        }
+    }
+
+    clearFieldError('modeOfProcurement');
+    return true;
+}
+
+// Cross-checks both Type/Description and Budget Thresholds
+function validateModeBudgetMatch() {
+    // 1. Run live type/description check first
+    if (!validateModeTypeMatch()) {
+        return false;
+    }
+
+    // 2. Run budget ceiling check if budget is entered
+    const modeSelect = document.getElementById('modeOfProcurement');
+    const budgetInput = document.getElementById('budget');
+    if (!modeSelect || !budgetInput) return true;
+
+    const modeValue = modeSelect.value.trim();
+    const budgetRaw = budgetInput.value.trim();
+    if (!modeValue || !budgetRaw) return true;
+
+    const budgetNumber = parseFloat(budgetRaw.replace(/,/g, ''));
+    if (isNaN(budgetNumber) || budgetNumber <= 0) return true;
+
+    const rule = (typeof PROCUREMENT_MODE_RULES !== 'undefined') ? PROCUREMENT_MODE_RULES[modeValue] : null;
+    if (rule && budgetNumber > rule.maxBudget) {
+        let ceilingMsg = '';
+        if (modeValue === 'Direct Acquisition') {
+            ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the ₱200,000.00 ceiling for Direct Acquisition under RA 12009 Sec. 32. Please use SVP or Competitive Bidding.`;
+        } else if (modeValue === 'Small Value Procurement (SVP)') {
+            ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the ₱2,000,000.00 ceiling for SVP under RA 12009 Sec. 31. Requires Competitive Bidding.`;
+        } else if (modeValue === 'Shopping') {
+            ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the ₱2,000,000.00 ceiling for Shopping under RA 12009 Sec. 30.`;
+        } else {
+            ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the allowable threshold of ${formatPesoMessage(rule.maxBudget)} for ${modeValue}.`;
+        }
+
+        showFieldError('modeOfProcurement', ceilingMsg);
+        showFieldError('budget', ceilingMsg);
+        return false;
+    }
+
+    clearFieldError('modeOfProcurement');
+    clearFieldError('budget');
+    return true;
+}
 
 // ============================================================
 // RECOMMENDED MODE OF PROCUREMENT (BUDGET-BASED)
 // ============================================================
 
+const PROCUREMENT_MODE_RULES = {
+    'Direct Acquisition': {
+        mode: 'Direct Acquisition',
+        category: 'Alternative Mode',
+        minBudget: 0.01,
+        maxBudget: 200000, // RA 12009 Section 32 ceiling for NGAs
+        allowedTypes: ['Goods', 'Infrastructure', 'Consulting Services'],
+        legalBasis: 'RA 12009 Sec. 32',
+        bracketLabel: '₱0 – ₱200,000'
+    },
+    'Small Value Procurement (SVP)': {
+        mode: 'Small Value Procurement (SVP)',
+        category: 'Alternative Mode',
+        minBudget: 0.01,
+        maxBudget: 2000000, // RA 12009 Section 31 ceiling for NGAs
+        allowedTypes: ['Goods', 'Infrastructure', 'Consulting Services'],
+        legalBasis: 'RA 12009 Sec. 31',
+        bracketLabel: '₱200,001 – ₱2,000,000'
+    },
+    'Shopping': {
+        mode: 'Shopping',
+        category: 'Alternative Mode',
+        minBudget: 0.01,
+        maxBudget: 2000000, // RA 12009 Section 30 ceiling for NGAs
+        allowedTypes: ['Goods'], // Goods ONLY
+        legalBasis: 'RA 12009 Sec. 30',
+        bracketLabel: '₱0 – ₱2,000,000 (Goods only)'
+    },
+    'Competitive Bidding': {
+        mode: 'Competitive Bidding',
+        category: 'Competitive Mode',
+        minBudget: 0.01,
+        maxBudget: Infinity, // Primary mode, allowed for any budget amount
+        allowedTypes: ['Goods', 'Infrastructure', 'Consulting Services'],
+        legalBasis: 'RA 12009 Sec. 15',
+        bracketLabel: '₱2,000,000 and above (or any amount)'
+    },
+    'Repeat Order': {
+        mode: 'Repeat Order',
+        category: 'Alternative Mode',
+        minBudget: 0.01,
+        maxBudget: Infinity,
+        allowedTypes: ['Goods'], // Goods ONLY
+        legalBasis: 'RA 12009 Sec. 29',
+        bracketLabel: 'Up to 25% of original contract (Goods only)'
+    },
+    'Direct Contracting': {
+        mode: 'Direct Contracting',
+        category: 'Alternative Mode',
+        minBudget: 0.01,
+        maxBudget: Infinity,
+        allowedTypes: ['Goods', 'Consulting Services'],
+        legalBasis: 'RA 12009 Sec. 28',
+        bracketLabel: 'Proprietary / Exclusive Source'
+    },
+    'Limited Source Bidding': {
+        mode: 'Limited Source Bidding',
+        category: 'Alternative Mode',
+        minBudget: 0.01,
+        maxBudget: Infinity,
+        allowedTypes: ['Goods', 'Infrastructure', 'Consulting Services'],
+        legalBasis: 'RA 12009 Sec. 25',
+        bracketLabel: 'Specialized goods / complex infrastructure'
+    },
+    'Competitive Dialogue': {
+        mode: 'Competitive Dialogue',
+        category: 'Alternative Mode',
+        minBudget: 0.01,
+        maxBudget: Infinity,
+        allowedTypes: ['Goods', 'Infrastructure', 'Consulting Services'],
+        legalBasis: 'RA 12009 Sec. 26',
+        bracketLabel: 'Complex or innovative procurement'
+    },
+    'Negotiated Procurement': {
+        mode: 'Negotiated Procurement',
+        category: 'Alternative Mode',
+        minBudget: 0.01,
+        maxBudget: Infinity,
+        allowedTypes: ['Goods', 'Infrastructure', 'Consulting Services'],
+        legalBasis: 'RA 12009 Sec. 33',
+        bracketLabel: 'Authorized statutory grounds'
+    }
+};
+
 const MODE_BUDGET_BRACKETS = [
-    { max: 199999, mode: 'Direct Acquisition', label: '₱0 – ₱199,999' },
-    { max: 1999999, mode: 'Small Value Procurement (SVP)', label: '₱200,000 – ₱1,999,999' },
+    { max: 200000, mode: 'Direct Acquisition', label: '₱0 – ₱200,000' },
+    { max: 2000000, mode: 'Small Value Procurement (SVP)', label: '₱200,001 – ₱2,000,000' },
     { max: Infinity, mode: 'Competitive Bidding', label: '₱2,000,000 and above' }
 ];
 
 
 function getRecommendedMode(budgetNumber) {
-
-    const bracket =
-        MODE_BUDGET_BRACKETS.find(
-            tier => budgetNumber <= tier.max
-        );
-
-    return bracket
-        ? bracket
-        : MODE_BUDGET_BRACKETS[MODE_BUDGET_BRACKETS.length - 1];
+    const bracket = MODE_BUDGET_BRACKETS.find(tier => budgetNumber <= tier.max);
+    return bracket || MODE_BUDGET_BRACKETS[MODE_BUDGET_BRACKETS.length - 1];
 }
 
 
 // Named differently from formatPesoExact() in dashboard-logic.js, which formats
 // table/preview totals ('P 1,234.50'). This one is only for the validation message.
 function formatPesoMessage(amount) {
-
-    return '₱' +
-        amount.toLocaleString('en-PH', {
-            maximumFractionDigits: 2
-        });
+    return '₱' + Number(amount).toLocaleString('en-PH', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
 }
 
 
@@ -1326,65 +1507,58 @@ function formatPesoMessage(amount) {
 // each field's own required/format validation is left to handle empties
 // and malformed input. Returns true when there's nothing to block on.
 function validateModeBudgetMatch() {
+    const modeSelect = document.getElementById('modeOfProcurement');
+    const budgetInput = document.getElementById('budget');
+    const typeSelect = document.getElementById('project_type');
 
-    const modeSelect =
-        document.getElementById('modeOfProcurement');
+    if (!modeSelect || !budgetInput) return true;
 
-    const budgetInput =
-        document.getElementById('budget');
+    const modeValue = modeSelect.value.trim();
+    const budgetRaw = budgetInput.value.trim();
+    const projectType = typeSelect ? typeSelect.value.trim() : '';
 
-    if (!modeSelect || !budgetInput) {
-        return true;
-    }
+    if (!modeValue || !budgetRaw) return true;
 
-    const modeValue =
-        modeSelect.value;
+    const budgetNumber = parseFloat(budgetRaw.replace(/,/g, ''));
+    if (isNaN(budgetNumber) || budgetNumber <= 0) return true;
 
-    const budgetRaw =
-        budgetInput.value.trim();
-
-    if (!modeValue || !budgetRaw) {
-        return true;
-    }
-
-    const budgetNumber =
-        parseFloat(budgetRaw.replace(/,/g, ''));
-
-    // Malformed/non-positive budget is already flagged by the field's own
-    // validation — don't pile a second, conflicting message on top of it.
-    if (isNaN(budgetNumber) || budgetNumber <= 0) {
-        return true;
-    }
-
-    const isBracketMode =
-        MODE_BUDGET_BRACKETS.some(tier => tier.mode === modeValue);
-
-    if (!isBracketMode) {
+    const rule = PROCUREMENT_MODE_RULES[modeValue];
+    if (!rule) {
         clearFieldError('modeOfProcurement');
         clearFieldError('budget');
         return true;
-}
-    const recommended =
-        getRecommendedMode(budgetNumber);
+    }
 
-    if (modeValue !== recommended.mode) {
+    // 1. Project Type Rule Check (e.g., Shopping and Repeat Order are for Goods only)
+    if (projectType && rule.allowedTypes && !rule.allowedTypes.includes(projectType)) {
+        const typeMsg = `"${modeValue}" under ${rule.legalBasis} is restricted to ${rule.allowedTypes.join(' / ')}. It cannot be used for "${projectType}" (IRR of RA 12009 Sec 7.7.2 (d)).`;
+        showFieldError('modeOfProcurement', typeMsg);
+        return false;
+    }
 
-        const message =
-            `Budget of ${formatPesoMessage(budgetNumber)} falls in the ${recommended.label} bracket, ` +
-            `which requires "${recommended.mode}". Please change the Mode of ` +
-            `Procurement or adjust the Estimated Budget so they match.`;
+    // 2. Budget Maximum Threshold Ceiling Check
+    if (budgetNumber > rule.maxBudget) {
+        let ceilingMsg = '';
+        if (modeValue === 'Direct Acquisition') {
+            ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the ₱200,000.00 ceiling for Direct Acquisition under RA 12009 Sec. 32. Please use Small Value Procurement (SVP) or Competitive Bidding.`;
+        } else if (modeValue === 'Small Value Procurement (SVP)') {
+            ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the ₱2,000,000.00 ceiling for Small Value Procurement (SVP) under RA 12009 Sec. 31. Projects exceeding ₱2,000,000.00 require Competitive Bidding (or an authorized alternative mode).`;
+        } else if (modeValue === 'Shopping') {
+            ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the ₱2,000,000.00 ceiling for Shopping under RA 12009 Sec. 30.`;
+        } else {
+            ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the maximum allowable threshold of ${formatPesoMessage(rule.maxBudget)} for ${modeValue}.`;
+        }
 
-        showFieldError('modeOfProcurement', message);
-        showFieldError('budget', message);
-
+        showFieldError('modeOfProcurement', ceilingMsg);
+        showFieldError('budget', ceilingMsg);
         return false;
     }
 
     clearFieldError('modeOfProcurement');
     clearFieldError('budget');
-
     return true;
 }
+
 
 
 // ============================================================
@@ -1677,10 +1851,12 @@ function initRequiredFieldValidation() {
                 fieldValid &&
                 (
                     fieldName === 'modeOfProcurement' ||
+                    fieldName === 'project_type' ||
+                    fieldName === 'project_description' ||
                     fieldName === 'budget'
                 )
             ) {
-
+                validateModeTypeMatch();
                 validateModeBudgetMatch();
             }
             if (fieldValid && (fieldName === 'end_date' || fieldName === 'delivery_period')) {
@@ -3534,13 +3710,13 @@ function approveWorkflowStep() {
 // INITIALIZATION
 // ============================================================
 
-document.addEventListener(
-    'DOMContentLoaded',
-    function () {
+document.addEventListener('DOMContentLoaded', function () {
 
         // This script only ever powers the "new request" modal — there is
         // no view-mode branch here (viewing existing records still happens
         // on page1.html).
+        ensureCriteriaNaOption();
+        ensureStrategyNaOption();
 
         initializePpmpNumber();
         initializeFiscalYear();
