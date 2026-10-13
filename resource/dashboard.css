@@ -1238,7 +1238,7 @@ html[data-theme="light"] .approval-info strong { color: #15803D; }
 .db-entry-expand-inner .excel-preview-table {
     table-layout: auto;
     width: 100%;
-    min-width: 1950px;
+    min-width: 2180px;
     border-collapse: separate;
     border-spacing: 0;
 }
@@ -1303,7 +1303,7 @@ html[data-theme="light"] .approval-info strong { color: #15803D; }
 }
 
 /* Row 3: the "Column N" form numbering, kept but quiet.
-   It also sets the width of every column (14 data columns + Actions). */
+   It also sets the width of every column (15 data columns + Actions). */
 .db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th {
     padding: 3px 8px;
     background: #fff;
@@ -1327,8 +1327,9 @@ html[data-theme="light"] .approval-info strong { color: #15803D; }
 .db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(11) { width: 150px; min-width: 150px; }
 .db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(12) { width: 230px; min-width: 230px; }
 .db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(13) { width: 190px; min-width: 190px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(14) { width: 170px; min-width: 170px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(15) { width: 52px;  min-width: 52px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(14) { width: 210px; min-width: 210px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(15) { width: 170px; min-width: 170px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(16) { width: 52px;  min-width: 52px; }
 
 /* ---- body ---- */
 

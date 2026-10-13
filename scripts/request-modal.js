@@ -717,6 +717,11 @@ function saveProcurementRequest() {
                 'remarks'
             ).value,
 
+        general_requirements:
+            document.getElementById('general_requirements')
+                ? document.getElementById('general_requirements').value.trim()
+                : '',
+
         supporting_documents:
             uploadedFiles.map(entry => ({
 
@@ -917,6 +922,18 @@ function validateIndividualField(fieldGroup) {
 
     const fieldName =
         fieldGroup.dataset.field;
+
+
+    // --------------------------------------------------------
+    // Optional fields: never required, nothing else to check
+    // --------------------------------------------------------
+
+    if (fieldName === 'general_requirements') {
+
+        clearFieldError(fieldName);
+
+        return true;
+    }
 
 
     // --------------------------------------------------------
@@ -2700,6 +2717,7 @@ function loadRecordIntoModal(id, itemIndex = 0) {
         'delivery_period': item.delivery_period,
         'fund_source': item.fund_source,
         'budget': item.budget,
+        'general_requirements': item.general_requirements,
         'remarks': item.remarks
     };
 

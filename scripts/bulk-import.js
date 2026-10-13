@@ -32,6 +32,10 @@
     var MAX_IMPORT_BYTES = 2 * 1024 * 1024;
     var MAX_IMPORT_ROWS = 200;
 
+    // "General Requirements/Miscellaneous/Common Supplies and Equipment" column:
+    // optional, and when filled it must be one of these three.
+    var GENERAL_REQUIREMENT_OPTIONS = ['General Requirements', 'Miscellaneous', 'Common Supplies and Equipment'];
+
     // One entry per template column, in display order. `match` finds the
     // column by its header text, so reordering columns or adding extra ones
     // in Excel does not break the import.
@@ -49,6 +53,7 @@
         { key: 'budget',                  label: 'Budget',             match: /budget/,                       width: 24, header: 'Estimated Budget / Authorized Budgetary Allocation (PhP)' },
         { key: 'strategies',              label: 'Strategies',         match: /strateg/,                      width: 32, header: 'PROCUREMENT STRATEGIES AND TOOLS' },
         { key: 'supporting_documents',    label: 'Supporting Docs',    match: /supporting|attached/,          width: 24, header: 'ATTACHED SUPPORTING DOCUMENTS', optional: true },
+        { key: 'general_requirements',    label: 'General Requirements', match: /general requirements|miscellaneous|common suppl/, width: 32, header: 'GENERAL REQUIREMENTS/MISCELLANEOUS/COMMON SUPPLIES AND EQUIPMENT', optional: true },
         { key: 'remarks',                 label: 'Remarks',            match: /remark/,                       width: 20, header: 'REMARKS' }
     ];
 
@@ -319,6 +324,15 @@
         if (remarks.length < 3) errors.push('Remarks is required (at least 3 characters).');
         item.remarks = remarks;
 
+        // Optional choice: General Requirements / Miscellaneous / Common Supplies and Equipment.
+        var generalReq = text('general_requirements');
+        var generalMatch = generalReq ? canonical(generalReq, GENERAL_REQUIREMENT_OPTIONS) : '';
+        if (generalReq && !generalMatch) {
+            errors.push('General Requirements/Miscellaneous/Common Supplies and Equipment must be one of: ' +
+                GENERAL_REQUIREMENT_OPTIONS.join(', ') + ' (or left blank).');
+        }
+        item.general_requirements = generalMatch || '';
+
         item.supporting_documents = [];
 
         return { item: errors.length ? null : item, errors: errors };
@@ -352,7 +366,7 @@
         var problems = [];
         var total = 0;
 
-        // Start right after the header rows, skipping the "Column 1 ... Column 14"
+        // Start right after the header rows, skipping the "Column 1 ... Column 15"
         // numbering row the template has under them.
         var startRow = header.headerIndex + header.rowsUsed;
         while (startRow < rows.length) {
@@ -440,7 +454,7 @@
                 views: [{ showGridLines: true }]
             });
 
-            // 1. Column Widths (14 columns)
+            // 1. Column Widths (15 columns)
             sheet.columns = [
                 { width: 36 }, // Col 1: Description
                 { width: 22 }, // Col 2: Type
@@ -455,18 +469,19 @@
                 { width: 24 }, // Col 11: Budget
                 { width: 32 }, // Col 12: Strategies
                 { width: 24 }, // Col 13: Attached Docs
-                { width: 20 }  // Col 14: Remarks
+                { width: 32 }, // Col 14: General Requirements / Misc. / Common Supplies
+                { width: 20 }  // Col 15: Remarks
             ];
 
             // 2. Titles & Metadata
-            sheet.mergeCells('A1:N1');
+            sheet.mergeCells('A1:O1');
             var title = sheet.getCell('A1');
             title.value = 'PROJECT PROCUREMENT MANAGEMENT PLAN (PPMP) NO. ' + ppmpNo;
             title.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FF000000' } };
             title.alignment = { horizontal: 'center', vertical: 'middle' };
             sheet.getRow(1).height = 28;
 
-            sheet.mergeCells('A2:N2');
+            sheet.mergeCells('A2:O2');
             var checks = sheet.getCell('A2');
             checks.value = isFinal ? '[ ] INDICATIVE     [X] FINAL' : '[X] INDICATIVE     [ ] FINAL';
             checks.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF000000' } };
@@ -504,7 +519,10 @@
             sheet.getCell('M7').value = 'ATTACHED SUPPORTING DOCUMENTS';
 
             sheet.mergeCells('N7:N8');
-            sheet.getCell('N7').value = 'REMARKS';
+            sheet.getCell('N7').value = 'GENERAL REQUIREMENTS/MISCELLANEOUS/COMMON SUPPLIES AND EQUIPMENT';
+
+            sheet.mergeCells('O7:O8');
+            sheet.getCell('O7').value = 'REMARKS';
 
             sheet.getRow(7).height = 24;
 
@@ -528,7 +546,7 @@
             sheet.getRow(8).height = 46;
 
             // 5. Column Numbers (Row 9)
-            for (var c = 1; c <= 14; c++) {
+            for (var c = 1; c <= 15; c++) {
                 sheet.getRow(9).getCell(c).value = 'Column ' + c;
             }
             sheet.getRow(9).height = 18;
@@ -536,6 +554,15 @@
             // 6. Data Entry Rows (Rows 10 to 14: 5 Blank Sample Rows)
             for (var r = 10; r <= 14; r++) {
                 sheet.getRow(r).height = 32;
+            }
+
+            // Dropdown on the General Requirements column (N10:N14).
+            for (var dv = 10; dv <= 14; dv++) {
+                sheet.getCell('N' + dv).dataValidation = {
+                    type: 'list',
+                    allowBlank: true,
+                    formulae: ['"' + GENERAL_REQUIREMENT_OPTIONS.join(',') + '"']
+                };
             }
 
             // 7. Total Budget Row (Row 15)
@@ -562,7 +589,7 @@
 
             for (var rowIdx = 7; rowIdx <= 15; rowIdx++) {
                 var rowObj = sheet.getRow(rowIdx);
-                for (var colIdx = 1; colIdx <= 14; colIdx++) {
+                for (var colIdx = 1; colIdx <= 15; colIdx++) {
                     var cell = rowObj.getCell(colIdx);
                     cell.border = thinBorder;
 
@@ -587,8 +614,8 @@
             sheet.getCell('F18').value = 'Certified Funds Available:';
             sheet.getCell('F18').font = { name: 'Arial', size: 9.5, bold: true };
 
-            sheet.getCell('K18').value = 'Approved by:';
-            sheet.getCell('K18').font = { name: 'Arial', size: 9.5, bold: true };
+            sheet.getCell('L18').value = 'Approved by:';
+            sheet.getCell('L18').font = { name: 'Arial', size: 9.5, bold: true };
 
             var sigUnderline = { top: { style: 'medium', color: { argb: 'FF000000' } } };
 
@@ -630,7 +657,7 @@
 
             makeSigBlock(1, 4, 'JAYMARK D. DUMIO', 'Signature over Printed Name', 'Focal, ICT Literacy Competency and Development Bureau X', dateStr);
             makeSigBlock(6, 9, 'BRYAN JOHN M. SABLAS', 'Signature over Printed Name', 'Budget Officer II', null);
-            makeSigBlock(11, 14, 'SITTIE RAHMA V. ALAWI, MTM, CSSGB', 'Signature over Printed Name', 'Regional Director, DICT X', null);
+            makeSigBlock(12, 15, 'SITTIE RAHMA V. ALAWI, MTM, CSSGB', 'Signature over Printed Name', 'Regional Director, DICT X', null);
 
             // Endorsed By Section
             sheet.getCell('A27').value = 'Endorsed by:';
@@ -669,6 +696,7 @@
                 ['Budget', 'A number greater than 0. The mode must match the budget bracket (e.g. Small Value Procurement within its limit).'],
                 ['Strategies', 'One or more of the strategies below, separated by a semicolon or a new line.'],
                 ['Supporting documents', 'Leave blank. Files cannot be imported; attach them to each item (Edit) before submitting.'],
+                ['General Requirements/Miscellaneous/Common Supplies and Equipment', 'Optional. Pick one of the options below (the cells have a dropdown), or leave blank.\n' + GENERAL_REQUIREMENT_OPTIONS.join('\n')],
                 ['Do not change', 'The header rows, the sheet name, or the TOTAL BUDGET / signature rows.'],
                 ['', ''],
                 ['Type of the Project', allowed.types.join('\n')],

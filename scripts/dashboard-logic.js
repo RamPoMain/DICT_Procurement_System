@@ -257,6 +257,7 @@ function getRecordItems(record) {
         fund_source: record.fund_source,
         budget: record.budget,
         strategies: record.strategies || [],
+        general_requirements: record.general_requirements || '',
         remarks: record.remarks,
         supporting_documents: record.supporting_documents || []
     }];
@@ -472,6 +473,10 @@ let previewItemIdSeq = 0;
 
 const PREVIEW_PROJECT_TYPES = ['Consulting Services', 'Goods', 'Infrastructure'];
 
+// "General Requirements/Miscellaneous/Common Supplies and Equipment" column:
+// the person picks which one the item is (or leaves it blank).
+const PREVIEW_GENERAL_REQUIREMENT_OPTIONS = ['General Requirements', 'Miscellaneous', 'Common Supplies and Equipment'];
+
 const PREVIEW_MODE_GROUPS = [
     { label: 'Competitive Mode', options: ['Competitive Bidding'] },
     { label: 'Alternative Modes', options: [
@@ -502,7 +507,7 @@ function blankPreviewItem() {
         project_description: '', project_type: '', quantity_size: '', mode: '',
         pre_procurement: '', bid_evaluation_criteria: '', start_date: '', end_date: '',
         delivery_period: '', fund_source: '', budget: '', strategies: [],
-        supporting_documents: [], remarks: ''
+        supporting_documents: [], general_requirements: '', remarks: ''
     };
 }
 
@@ -781,10 +786,17 @@ function buildEditableItemRow(record, item) {
                 </div>
             </td>
             
-            <!-- Col 14: Remarks -->
+            <!-- Col 14: General Requirements / Miscellaneous / Common Supplies and Equipment -->
+            <td><select class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="general_requirements" onchange="onPreviewFieldInput(this)">
+                <option value=""${!item.general_requirements ? ' selected' : ''}>None / Not applicable</option>
+                ${selectOptionsHtml(PREVIEW_GENERAL_REQUIREMENT_OPTIONS, item.general_requirements)}
+                ${(item.general_requirements && PREVIEW_GENERAL_REQUIREMENT_OPTIONS.indexOf(item.general_requirements) === -1) ? selectOptionsHtml([item.general_requirements], item.general_requirements) : ''}
+            </select></td>
+            
+            <!-- Col 15: Remarks -->
             <td><textarea class="ep-input" rows="2" data-record-id="${rid}" data-item-id="${iid}" data-field="remarks" oninput="onPreviewFieldInput(this)" placeholder="Remarks">${escapeHtml(item.remarks || '')}</textarea></td>
             
-            <!-- Col 15: Actions (Remove) -->
+            <!-- Col 16: Actions (Remove) -->
             <td class="ep-remove-cell">
                 <button type="button" class="ep-remove-btn" title="Remove this item" onclick="removePreviewItem(${rid}, ${iid})">
                     <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6L18 18M18 6L6 18" stroke-linecap="round"/></svg>
@@ -960,6 +972,7 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true) {
                 <td>${escapeHtml(formatPesoExact(parseBudgetNumber(item.budget)))}</td>
                 <td>${itemStrategies}</td>
                 <td>${attachedDocs}</td>
+                <td>${escapeHtml(item.general_requirements || '')}</td>
                 <td>${escapeHtml(item.remarks || '')}</td>
             </tr>
         `;
@@ -992,6 +1005,7 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true) {
                             <th colspan="2">FUNDING DETAILS</th>
                             <th rowspan="2">PROCUREMENT STRATEGIES AND TOOLS</th>
                             <th rowspan="2">ATTACHED SUPPORTING DOCUMENTS</th>
+                            <th rowspan="2">GENERAL REQUIREMENTS/MISCELLANEOUS/COMMON SUPPLIES AND EQUIPMENT</th>
                             <th rowspan="2">REMARKS</th>
                             ${editable ? '<th rowspan="2">Actions</th>' : ''}
                         </tr>
@@ -1023,15 +1037,17 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true) {
                             <th>Column 12</th>
                             <th>Column 13</th>
                             <th>Column 14</th>
+                            <th>Column 15</th>
                             ${editable ? '<th></th>' : ''}
                         </tr>
                     </thead>
                     <tbody>
                         ${itemRows}
-                        ${editable ? '' : '<tr class="ep-filter-empty hidden"><td colspan="14">No items match the current filters.</td></tr>'}
+                        ${editable ? '' : '<tr class="ep-filter-empty hidden"><td colspan="15">No items match the current filters.</td></tr>'}
                         <tr>
                             <td colspan="10" class="excel-total-label">TOTAL BUDGET:</td>
                             <td class="excel-total-value">${escapeHtml(formattedTotal)}</td>
+                            <td></td>
                             <td></td>
                             <td></td>
                             <td></td>
@@ -1043,10 +1059,11 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true) {
                             <td></td>
                             <td></td>
                             <td></td>
+                            <td></td>
                         </tr>`}
                         ${editable ? `
                         <tr class="ep-add-row">
-                            <td colspan="15">
+                            <td colspan="16">
                                 <button type="button" class="ep-add-btn" onclick="addPreviewItem(${Number(record.id)})">
                                     <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5V19M5 12H19" stroke-linecap="round"/></svg>
                                     Add Item
@@ -1411,12 +1428,14 @@ function getFilteredEntryRecords(records) {
     const statusFilter = document.getElementById('entryStatusFilter');
     const indicativeFilter = document.getElementById('entryIndicativeFilter');
     const typeFilter = document.getElementById('entryTypeFilter');
+    const categoryFilter = document.getElementById('entryCategoryFilter');
     const officeFilter = document.getElementById('entryOfficeFilter');
     const searchInput = document.getElementById('entrySearchInput');
 
     const statusValue = statusFilter ? statusFilter.value : 'All';
     const indicativeValue = indicativeFilter ? indicativeFilter.value : 'All';
     const typeValue = typeFilter ? typeFilter.value : 'All';
+    const categoryValue = categoryFilter ? categoryFilter.value : 'All';
     const officeValue = officeFilter ? officeFilter.value : 'All';
     const searchValue = searchInput ? searchInput.value.trim().toLowerCase() : '';
 
@@ -1425,6 +1444,7 @@ function getFilteredEntryRecords(records) {
         const statusMatches = statusValue === 'All' || getPpmpStatus(record) === statusValue;
         const indicativeMatches = indicativeValue === 'All' || record.is_indicative === indicativeValue;
         const typeMatches = typeValue === 'All' || items.some(item => item.project_type === typeValue);
+        const categoryMatches = categoryValue === 'All' || items.some(item => item.general_requirements === categoryValue);
         const officeMatches = officeValue === 'All' || record.end_user === officeValue;
         const searchHaystack = [
             record.ppmp_no,
@@ -1432,10 +1452,11 @@ function getFilteredEntryRecords(records) {
             record.fiscal_year,
             ...items.map(item => item.project_description),
             ...items.map(item => item.project_type),
-            ...items.map(item => item.mode)
+            ...items.map(item => item.mode),
+            ...items.map(item => item.general_requirements)
         ].join(' ').toLowerCase();
 
-        return statusMatches && indicativeMatches && typeMatches && officeMatches && (!searchValue || searchHaystack.includes(searchValue));
+        return statusMatches && indicativeMatches && typeMatches && categoryMatches && officeMatches && (!searchValue || searchHaystack.includes(searchValue));
     });
 }
 
@@ -2188,7 +2209,7 @@ function savePreviewChanges(recordId) {
     // Tidy the text the person typed, then check every item against the same
     // rules the request form uses. Nothing is saved until all of it passes.
     draft.items.forEach(item => {
-        ['project_description', 'quantity_size', 'fund_source', 'remarks'].forEach(key => {
+        ['project_description', 'quantity_size', 'fund_source', 'general_requirements', 'remarks'].forEach(key => {
             item[key] = String(item[key] == null ? '' : item[key]).trim();
         });
         const budget = parsePreviewBudget(item.budget);
@@ -2247,7 +2268,7 @@ function savePreviewChanges(recordId) {
 // and only when the PPMP has 2+ items. The PDF export and the full-screen
 // preview are unaffected and always contain every item.
 // ------------------------------------------------------------
-const ENTRY_ITEM_FILTER_DEFAULTS = { search: '', type: 'All', mode: 'All', docs: 'All' };
+const ENTRY_ITEM_FILTER_DEFAULTS = { search: '', type: 'All', category: 'All', mode: 'All', docs: 'All' };
 let entryItemFilters = Object.assign({}, ENTRY_ITEM_FILTER_DEFAULTS);
 
 function resetEntryItemFilters() {
@@ -2256,7 +2277,7 @@ function resetEntryItemFilters() {
 
 function isEntryItemFilterActive() {
     const f = entryItemFilters;
-    return !!(f.search.trim() || f.type !== 'All' || f.mode !== 'All' || f.docs !== 'All');
+    return !!(f.search.trim() || f.type !== 'All' || f.category !== 'All' || f.mode !== 'All' || f.docs !== 'All');
 }
 
 // data-* attributes for one item row: everything the filter needs to
@@ -2268,7 +2289,7 @@ function itemFilterAttrs(item) {
     const haystack = [
         item.project_description, item.project_type, item.quantity_size, item.mode,
         item.pre_procurement, item.bid_evaluation_criteria, item.fund_source,
-        item.remarks, item.start_date, item.end_date, item.delivery_period,
+        item.remarks, item.general_requirements, item.start_date, item.end_date, item.delivery_period,
         formatPesoExact(parseBudgetNumber(item.budget)),
         Array.isArray(item.strategies) ? item.strategies.join(' ') : item.strategies,
         docNames.join(' ')
@@ -2276,6 +2297,7 @@ function itemFilterAttrs(item) {
 
     return 'data-search="' + escapeHtml(haystack) + '"' +
         ' data-type="' + escapeHtml(item.project_type || '') + '"' +
+        ' data-category="' + escapeHtml(item.general_requirements || '') + '"' +
         ' data-mode="' + escapeHtml(item.mode || '') + '"' +
         ' data-docs="' + (itemHasSupportingDocument(item) ? 'with' : 'missing') + '"' +
         ' data-budget="' + parseBudgetNumber(item.budget) + '"';
@@ -2296,9 +2318,19 @@ function buildItemFilterBarHtml(record) {
     const types = uniqueValues('project_type');
     const modes = uniqueValues('mode');
 
+    // Category = the "General Requirements/Miscellaneous/Common Supplies and
+    // Equipment" choice. Only the categories actually used by this PPMP's
+    // items are offered, plus "None" when some item has no category.
+    const usedCategories = uniqueValues('general_requirements');
+    const categories = PREVIEW_GENERAL_REQUIREMENT_OPTIONS.filter(function (c) { return usedCategories.indexOf(c) !== -1; })
+        .concat(usedCategories.filter(function (c) { return PREVIEW_GENERAL_REQUIREMENT_OPTIONS.indexOf(c) === -1; }));
+    const hasUncategorized = items.some(function (item) { return !String(item.general_requirements || '').trim(); });
+
     // A stale selection (its items were deleted) falls back to "All".
     if (entryItemFilters.type !== 'All' && types.indexOf(entryItemFilters.type) === -1) entryItemFilters.type = 'All';
     if (entryItemFilters.mode !== 'All' && modes.indexOf(entryItemFilters.mode) === -1) entryItemFilters.mode = 'All';
+    if (entryItemFilters.category !== 'All' && entryItemFilters.category !== '__none__' && categories.indexOf(entryItemFilters.category) === -1) entryItemFilters.category = 'All';
+    if (entryItemFilters.category === '__none__' && !hasUncategorized) entryItemFilters.category = 'All';
 
     function options(values, current, allLabel) {
         return '<option value="All">' + allLabel + '</option>' + values.map(function (v) {
@@ -2317,6 +2349,10 @@ function buildItemFilterBarHtml(record) {
             <label class="db-filter-control">
                 <span>Item type</span>
                 <select id="epFilterType" onchange="onEntryItemFilterChange()">${options(types, entryItemFilters.type, 'All types')}</select>
+            </label>
+            <label class="db-filter-control">
+                <span>Category</span>
+                <select id="epFilterCategory" onchange="onEntryItemFilterChange()">${options(categories, entryItemFilters.category, 'All categories')}${hasUncategorized ? '<option value="__none__"' + (entryItemFilters.category === '__none__' ? ' selected' : '') + '>None / Not applicable</option>' : ''}</select>
             </label>
             <label class="db-filter-control">
                 <span>Mode</span>
@@ -2346,6 +2382,7 @@ function onEntryItemFilterChange() {
     entryItemFilters = {
         search: get('epFilterSearch', ''),
         type: get('epFilterType', 'All'),
+        category: get('epFilterCategory', 'All'),
         mode: get('epFilterMode', 'All'),
         docs: get('epFilterDocs', 'All')
     };
@@ -2359,7 +2396,7 @@ function clearEntryItemFilters() {
         search.value = '';
         search.focus();
     }
-    ['epFilterType', 'epFilterMode', 'epFilterDocs'].forEach(function (id) {
+    ['epFilterType', 'epFilterCategory', 'epFilterMode', 'epFilterDocs'].forEach(function (id) {
         const el = document.getElementById(id);
         if (el) el.value = 'All';
     });
@@ -2386,6 +2423,7 @@ function applyEntryItemFilters() {
         const d = row.dataset;
         const matches =
             (f.type === 'All' || d.type === f.type) &&
+            (f.category === 'All' || (f.category === '__none__' ? d.category === '' : d.category === f.category)) &&
             (f.mode === 'All' || d.mode === f.mode) &&
             (f.docs === 'All' || d.docs === f.docs) &&
             terms.every(function (t) { return d.search.indexOf(t) !== -1; });
@@ -2506,7 +2544,7 @@ function renderEntries(records) {
 }
 
 function initEntryFilters() {
-    ['entryStatusFilter', 'entryIndicativeFilter', 'entryTypeFilter', 'entryOfficeFilter', 'entrySearchInput'].forEach(id => {
+    ['entryStatusFilter', 'entryIndicativeFilter', 'entryTypeFilter', 'entryCategoryFilter', 'entryOfficeFilter', 'entrySearchInput'].forEach(id => {
         const control = document.getElementById(id);
         if (!control) return;
 

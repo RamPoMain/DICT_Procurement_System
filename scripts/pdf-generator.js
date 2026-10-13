@@ -59,6 +59,7 @@ async function generatePPMP_PDF() {
             fund_source: getVal('fund_source'),
             budget: getVal('budget'),
             strategies: typeof selectedStrategies !== 'undefined' ? selectedStrategies : [],
+            general_requirements: getVal('general_requirements'),
             remarks: getVal('remarks')
         }];
     }
@@ -140,6 +141,7 @@ async function generatePPMP_PDF() {
             { content: 'FUNDING DETAILS', colSpan: 2, styles: { halign: 'center' } },
             { content: 'PROCUREMENT STRATEGIES AND TOOLS', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
             { content: 'ATTACHED SUPPORTING DOCUMENTS', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+            { content: 'GENERAL REQUIREMENTS/MISCELLANEOUS/COMMON SUPPLIES AND EQUIPMENT', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
             { content: 'REMARKS', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } }
         ],
         [
@@ -155,7 +157,7 @@ async function generatePPMP_PDF() {
             'Source of Funds',
             'Estimated Budget / Authorized Budgetary Allocation (PhP)'
         ],
-        ['Column 1', 'Column 2', 'Column 3', 'Column 4', 'Column 5', 'Column 6', 'Column 7', 'Column 8', 'Column 9', 'Column 10', 'Column 11', 'Column 12', 'Column 13', 'Column 14']
+        ['Column 1', 'Column 2', 'Column 3', 'Column 4', 'Column 5', 'Column 6', 'Column 7', 'Column 8', 'Column 9', 'Column 10', 'Column 11', 'Column 12', 'Column 13', 'Column 14', 'Column 15']
     ];
 
     const itemRows = items.map(item => {
@@ -181,7 +183,8 @@ async function generatePPMP_PDF() {
             `P ${formattedBudget}`,
             strategiesStr,                         // Col 12: Strategies
             docsStr,                               // Col 13: Attached Documents
-            item.remarks || ''                     // Col 14: Remarks
+            item.general_requirements || '',       // Col 14: General Requirements / Misc. / Common Supplies
+            item.remarks || ''                     // Col 15: Remarks
         ];
     });
 
@@ -192,13 +195,14 @@ async function generatePPMP_PDF() {
             { content: `P ${formattedTotal}`, styles: { fontStyle: 'bold' } },
             '',
             '',
+            '',
             ''
         ]
     ];
 
     // Column widths are proportional shares of the printable width (A4 landscape
-    // minus margins), so all 14 columns fit on the page and no word gets chopped
-    // mid-way. Order = the 14 columns of the PPMP form.
+    // minus margins), so all 15 columns fit on the page and no word gets chopped
+    // mid-way. Order = the 15 columns of the PPMP form.
     const usableWidth = pageWidth - margin * 2;
     const colWeights = [
         9.5,   // 1  General description
@@ -214,7 +218,8 @@ async function generatePPMP_PDF() {
         10,    // 11 Estimated budget
         11.5,  // 12 Strategies and tools
         8.5,   // 13 Attached documents
-        6.5    // 14 Remarks
+        8,     // 14 General requirements / miscellaneous / common supplies and equipment
+        6.5    // 15 Remarks
     ];
     const weightTotal = colWeights.reduce((a, b) => a + b, 0);
     const columnStyles = {};
@@ -475,10 +480,21 @@ async function buildAPP_PDF(targetYear = null) {
         ];
     }
 
-    // Separate Direct Acquisition from General items
+    // Split the items into the three APP sections. The "General Requirements /
+    // Miscellaneous / Common Supplies and Equipment" choice made on an item
+    // decides its section; an item with no choice keeps the old rule
+    // (Direct Acquisition -> Miscellaneous, everything else -> General).
     const isDirectAcquisition = (item) => String(item.mode || '').trim().toLowerCase().includes('direct acquisition');
-    const generalItems = appItems.filter(item => !isDirectAcquisition(item));
-    const directAcquisitionItems = appItems.filter(item => isDirectAcquisition(item));
+    const appSectionOf = (item) => {
+        const chosen = String(item.general_requirements || '').trim();
+        if (chosen === 'Common Supplies and Equipment') return 'cse';
+        if (chosen === 'Miscellaneous') return 'misc';
+        if (chosen === 'General Requirements') return 'general';
+        return isDirectAcquisition(item) ? 'misc' : 'general';
+    };
+    const generalItems = appItems.filter(item => appSectionOf(item) === 'general');
+    const directAcquisitionItems = appItems.filter(item => appSectionOf(item) === 'misc');
+    const cseItems = appItems.filter(item => appSectionOf(item) === 'cse');
 
     // 5. Data Rows
     const tableBody = [];
@@ -511,6 +527,23 @@ async function buildAPP_PDF(targetYear = null) {
 
     if (directAcquisitionItems.length > 0) {
         directAcquisitionItems.forEach(item => {
+            tableBody.push(formatAppRow(item));
+        });
+    } else {
+        tableBody.push(['', '', '', '', '', '', '', '', '', '', '', '']);
+    }
+
+    // --- Section 3: Common Supplies and Equipment (CSE) ---
+    tableBody.push([
+        {
+            content: 'Common Supplies and Equipment (CSE)',
+            colSpan: 12,
+            styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' }
+        }
+    ]);
+
+    if (cseItems.length > 0) {
+        cseItems.forEach(item => {
             tableBody.push(formatAppRow(item));
         });
     } else {
