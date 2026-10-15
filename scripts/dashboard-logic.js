@@ -366,27 +366,121 @@ function formatRelativeTime(timestamp) {
 }
 
 
-function renderStats(records) {
+// ============================================================
+// DASHBOARD STATS CALCULATION
+// - Suppliers: Counts APP versions (Total, Pending, Completed, APP Budget)
+// - Others: Counts PPMP requests
+// ============================================================
 
-    // These stat cards only exist on the dashboard page — bail out quietly
-    // on pages (like Profile) that don't have them, instead of throwing.
+// Helper to collect all APP records relevant to the current system
+function getSupplierAppList(records) {
+    const appRecords = typeof getAllAppRecords === 'function' ? getAllAppRecords() : [];
+    
+    // Also include any fiscal year from approved PPMPs that hasn't been saved yet
+    const yearsFromPpmp = [...new Set(
+        (records || [])
+            .filter(r => r && r.status === 'Completed' && /^\d{4}$/.test(String(r.fiscal_year).trim()))
+            .map(r => String(r.fiscal_year).trim())
+    )];
+
+    const appsMap = new Map();
+    appRecords.forEach(app => appsMap.set(String(app.fiscal_year), app));
+    yearsFromPpmp.forEach(year => {
+        if (!appsMap.has(year) && typeof getAppRecord === 'function') {
+            appsMap.set(year, getAppRecord(year));
+        }
+    });
+
+    return Array.from(appsMap.values());
+}
+
+// Helper to calculate total budget of an APP for a fiscal year
+function getAppTotalBudgetForYear(fiscalYear, records) {
+    const relevant = typeof getLatestApprovedPpmpPerOffice === 'function'
+        ? getLatestApprovedPpmpPerOffice(records, fiscalYear)
+        : (records || []).filter(r => String(r.fiscal_year) === String(fiscalYear));
+    
+    return relevant.reduce((sum, r) => sum + getRecordTotalBudget(r), 0);
+}
+
+// Safely updates ONLY the top small uppercase label (.db-stat-label),
+// NEVER touching the big number values (#stat-total, #stat-pending, etc.)
+function updateSupplierStatCardLabels(isSupplier) {
+    const totalCard = document.getElementById('stat-total')?.closest('.db-stat-card, .stat-card');
+    if (totalCard) {
+        const label = totalCard.querySelector('.db-stat-label');
+        if (label) {
+            if (!label.dataset.defaultLabel) label.dataset.defaultLabel = label.textContent.trim();
+            label.textContent = isSupplier ? 'TOTAL APP VERSIONS' : label.dataset.defaultLabel;
+        }
+    }
+
+    const budgetCard = document.getElementById('stat-budget')?.closest('.db-stat-card, .stat-card');
+    if (budgetCard) {
+        const label = budgetCard.querySelector('.db-stat-label');
+        if (label) {
+            if (!label.dataset.defaultLabel) label.dataset.defaultLabel = label.textContent.trim();
+            label.textContent = isSupplier ? 'TOTAL APP BUDGET' : label.dataset.defaultLabel;
+        }
+    }
+}
+
+function renderStats(records) {
     const totalEl = document.getElementById('stat-total');
     if (!totalEl) return;
 
+    const session = typeof getSession === 'function' ? getSession() : null;
+
+    // --------------------------------------------------------
+    // SUPPLIERS: COUNT APP VERSIONS AS NUMBERS
+    // --------------------------------------------------------
+    if (session && session.role === 'SUP') {
+        const apps = getSupplierAppList(records);
+        const totalApps = apps.length;
+        const completedApps = apps.filter(a => a.status === 'Completed').length;
+        const pendingApps = apps.filter(a => a.status !== 'Completed').length;
+
+        // Populate big number values
+        totalEl.innerText = totalApps;
+
+        const pendingEl = document.getElementById('stat-pending');
+        if (pendingEl) pendingEl.innerText = pendingApps;
+
+        const completedEl = document.getElementById('stat-completed');
+        if (completedEl) completedEl.innerText = completedApps;
+
+        const totalAppBudget = apps.reduce((sum, app) => sum + getAppTotalBudgetForYear(app.fiscal_year, records), 0);
+        const budgetEl = document.getElementById('stat-budget');
+        if (budgetEl) budgetEl.innerText = formatPeso(totalAppBudget);
+
+        updateSupplierStatCardLabels(true);
+        return;
+    }
+
+    // --------------------------------------------------------
+    // OTHER ROLES: COUNT PPMPS
+    // --------------------------------------------------------
+    updateSupplierStatCardLabels(false);
+
     totalEl.innerText = records.length;
 
-    document.getElementById('stat-pending').innerText =
-        records.filter(r => getPpmpStatus(r) !== 'Completed').length;
+    const pendingEl = document.getElementById('stat-pending');
+    if (pendingEl) {
+        pendingEl.innerText = records.filter(r => getPpmpStatus(r) !== 'Completed').length;
+    }
 
-    document.getElementById('stat-completed').innerText =
-        records.filter(r => r.status === 'Completed').length;
+    const completedEl = document.getElementById('stat-completed');
+    if (completedEl) {
+        completedEl.innerText = records.filter(r => r.status === 'Completed').length;
+    }
 
     const totalBudget = records.reduce(
         (sum, record) => sum + getRecordTotalBudget(record),
         0
     );
 
-    document.getElementById('stat-budget').innerText = formatPeso(totalBudget);
+    const budgetEl = document.getElementById('stat-budget');
+    if (budgetEl) budgetEl.innerText = formatPeso(totalBudget);
 }
 
 
@@ -1276,10 +1370,13 @@ function isApprovedLaterThan(a, b) {
 // year. Pass null/undefined as the year to ignore the year.
 function getLatestApprovedPpmpPerOffice(records, fiscalYear) {
     const latestByOffice = new Map();
+    const targetYearStr = fiscalYear != null ? String(fiscalYear).trim() : null;
 
     (records || []).forEach(record => {
         if (!record || record.status !== 'Completed') return;
-        if (fiscalYear != null && String(record.fiscal_year) !== String(fiscalYear)) return;
+        
+        // Strictly filter to the requested fiscal year
+        if (targetYearStr && String(record.fiscal_year).trim() !== targetYearStr) return;
 
         const office = record.end_user || 'N/A';
         const current = latestByOffice.get(office);
@@ -1393,7 +1490,12 @@ function buildAppPreviewModal() {
 function openAppPreviewModal(result) {
     if (!appPreviewEl) appPreviewEl = buildAppPreviewModal();
 
-    if (appPreviewUrl) URL.revokeObjectURL(appPreviewUrl);
+    // Revoke old blob URL to prevent memory leaks and cache collision
+    if (appPreviewUrl) {
+        URL.revokeObjectURL(appPreviewUrl);
+        appPreviewUrl = null;
+    }
+
     appPreviewUrl = URL.createObjectURL(result.blob);
     appPreviewYear = result.fiscalYear;
 
@@ -1401,7 +1503,15 @@ function openAppPreviewModal(result) {
     const session = typeof getSession === 'function' ? getSession() : null;
 
     appPreviewEl.querySelector('#appPreviewTitle').textContent = `Annual Procurement Plan (APP) — FY ${result.fiscalYear}`;
-    appPreviewEl.querySelector('#appPreviewFrame').src = appPreviewUrl + '#view=FitH';
+
+    // Force iframe PDF viewer to completely reload the canvas for the new year
+    const frame = appPreviewEl.querySelector('#appPreviewFrame');
+    if (frame) {
+        frame.src = 'about:blank';
+        setTimeout(function () {
+            frame.src = appPreviewUrl + '#view=FitH';
+        }, 30);
+    }
 
     renderAppWorkflowUi(record, session);
 
@@ -1502,6 +1612,11 @@ function submitAppForApproval(fiscalYear) {
         date: new Date().toLocaleDateString(),
         at: Date.now()
     });
+    
+    saveAppRecord(record);
+    if (typeof refreshDashboardRecords === 'function') {
+        refreshDashboardRecords();
+    }
 
     saveAppRecord(record);
     showToast(`APP for FY ${fiscalYear} submitted to the ARD for review.`);
@@ -1625,6 +1740,9 @@ function performAppReviewAction(fiscalYear, action) {
     }
 
     saveAppRecord(record);
+    if (typeof refreshDashboardRecords === 'function') {
+        refreshDashboardRecords();
+    }
 
     // A Final APP closes the year: say what new PPMPs will start with now.
     if (record.status === 'Completed') {
@@ -1641,7 +1759,8 @@ function performAppReviewAction(fiscalYear, action) {
 // ENTRY POINT & BUTTON VISIBILITY
 // ------------------------------------------------------------
 
-async function runPreviewApp() {
+// Accepts targetYear so it generates the preview for the exact requested year
+async function runPreviewApp(targetYear = null) {
     if (appGenerating) return;
 
     if (typeof previewAPP_PDF !== 'function') {
@@ -1649,9 +1768,16 @@ async function runPreviewApp() {
         return;
     }
 
+    const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    // If no year specified, use the active year
+    const yearToPreview = targetYear 
+        ? String(targetYear).trim() 
+        : (typeof getDefaultAppFiscalYear === 'function' ? String(getDefaultAppFiscalYear(records)).trim() : null);
+
     appGenerating = true;
     try {
-        const result = await previewAPP_PDF();
+        // Forward yearToPreview to previewAPP_PDF!
+        const result = await previewAPP_PDF(yearToPreview);
         if (result) openAppPreviewModal(result);
     } catch (err) {
         console.error('APP preview failed:', err);
@@ -1661,21 +1787,24 @@ async function runPreviewApp() {
     }
 }
 
-async function runGenerateApp() {
-    const session = typeof getSession === 'function' ? getSession() : null;
-    const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
-    const year = getDefaultAppFiscalYear(records);
-    const appRec = getAppRecord(year);
+function getLatestApprovedPpmpPerOffice(records, fiscalYear) {
+    const latestByOffice = new Map();
+    const targetYearStr = fiscalYear != null ? String(fiscalYear).trim() : null;
 
-    // If not yet fully approved, opening the preview modal shows review state
-    if (appRec.status !== 'Completed') {
-        runPreviewApp();
-        return;
-    }
+    (records || []).forEach(record => {
+        if (!record || record.status !== 'Completed') return;
+        
+        // Strictly filter to the requested fiscal year
+        if (targetYearStr && String(record.fiscal_year).trim() !== targetYearStr) return;
 
-    if (typeof generateAPP_PDF === 'function') {
-        generateAPP_PDF(year);
-    }
+        const office = record.end_user || 'N/A';
+        const current = latestByOffice.get(office);
+        if (!current || isApprovedLaterThan(record, current)) {
+            latestByOffice.set(office, record);
+        }
+    });
+
+    return Array.from(latestByOffice.values());
 }
 
 // Shows the APP button for SUP, ARD, and RD
@@ -3038,25 +3167,371 @@ function closeConfirmModal() {
     pendingDelete = null;
 }
 
+// ============================================================
+// RENDER DEDICATED APP SECTION ON THE DASHBOARD (index.html)
+// Matches Recent Activity card styles and supports theme switching
+// ============================================================
+
+function renderDashboardAppSection() {
+    const list = document.getElementById('db-activity-list');
+    if (!list) return; // Only runs on index.html (Dashboard)
+
+    let appDashCard = document.getElementById('dbAppDashboardCard');
+    const allRecords = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const apps = typeof getSupplierAppList === 'function' ? getSupplierAppList(allRecords) : [];
+    const session = typeof getSession === 'function' ? getSession() : null;
+
+    if (!appDashCard) {
+        appDashCard = document.createElement('div');
+        appDashCard.id = 'dbAppDashboardCard';
+        appDashCard.className = 'db-activity-card';
+        appDashCard.style.cssText = 'margin-bottom: 22px; padding: 22px 24px; background: var(--db-card); border: 1px solid var(--db-border); border-radius: var(--db-radius); box-shadow: var(--db-shadow);';
+
+        // Position it right above Recent Activity
+        const anchor = list.closest('.db-activity-card, .db-card, .db-recent-activity, section');
+        if (anchor && anchor.parentNode) {
+            anchor.parentNode.insertBefore(appDashCard, anchor);
+        } else {
+            list.parentNode.appendChild(appDashCard);
+        }
+    }
+
+    if (apps.length === 0) {
+        appDashCard.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+                <h3 style="margin:0; font-size:14.5px; font-weight:700; color:var(--db-text);">Annual Procurement Plans (APP)</h3>
+            </div>
+            <p style="margin:0; font-size:13px; color:var(--db-text-dim);">No Annual Procurement Plans compiled yet. Approved PPMPs will assemble here.</p>
+        `;
+        return;
+    }
+
+    const itemsHtml = apps.map(app => {
+        const yearStr = String(app.fiscal_year);
+        const totalBudget = typeof getAppTotalBudgetForYear === 'function' 
+            ? getAppTotalBudgetForYear(yearStr, allRecords) 
+            : 0;
+        const isCompleted = app.status === 'Completed';
+
+        let statusBadge = '<span class="db-status-pill is-draft">Draft</span>';
+        if (isCompleted) {
+            statusBadge = '<span class="db-status-pill is-completed">Final (Approved)</span>';
+        } else if (app.status === 'For Approval') {
+            const roleName = app.currentApproverRole === 'ARD' ? 'ARD' : 'RD';
+            statusBadge = `<span class="db-status-pill is-pending">Under Review (${roleName})</span>`;
+        } else if (app.returned_for_revision) {
+            statusBadge = '<span class="db-status-pill is-returned">Returned</span>';
+        }
+
+        let actionBtn = `
+            <button type="button" class="db-action-btn" title="View APP" onclick="runPreviewApp('${yearStr}')" style="padding: 7px 16px; font-size: 12.5px; font-weight: 600; width: auto; height: auto;">
+                View APP
+            </button>
+        `;
+
+        if (session && session.role === 'ARD' && app.status === 'For Approval' && app.currentApproverRole === 'ARD') {
+            actionBtn = `
+                <button type="button" class="db-action-btn" title="Review (ARD)" onclick="runPreviewApp('${yearStr}')" style="padding: 7px 16px; font-size: 12.5px; font-weight: 600; width: auto; height: auto; background: var(--db-accent); color: #fff; border-color: var(--db-accent);">
+                    Review (ARD) &rarr;
+                </button>
+            `;
+        } else if (session && session.role === 'RD' && app.status === 'For Approval' && app.currentApproverRole === 'RD') {
+            actionBtn = `
+                <button type="button" class="db-action-btn" title="Review (RD)" onclick="runPreviewApp('${yearStr}')" style="padding: 7px 16px; font-size: 12.5px; font-weight: 600; width: auto; height: auto; background: var(--db-accent); color: #fff; border-color: var(--db-accent);">
+                    Review (RD) &rarr;
+                </button>
+            `;
+        } else if (isCompleted) {
+            actionBtn = `
+                <div style="display:flex; gap:8px;">
+                    <button type="button" class="db-action-btn" title="View APP" onclick="runPreviewApp('${yearStr}')" style="padding: 7px 16px; font-size: 12.5px; font-weight: 600; width: auto; height: auto;">
+                        View APP
+                    </button>
+                    <button type="button" class="db-action-btn" title="Download PDF" onclick="generateAPP_PDF('${yearStr}')" style="padding: 7px 16px; font-size: 12.5px; font-weight: 600; width: auto; height: auto; background: var(--db-accent); color: #fff; border-color: var(--db-accent);">
+                        Download PDF
+                    </button>
+                </div>
+            `;
+        }
+
+        return `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-top:1px solid var(--db-border);">
+                <div>
+                    <strong style="font-size:13.5px; color:var(--db-text); display:block; margin-bottom:3px;">
+                        Annual Procurement Plan for FY ${escapeHtml(yearStr)}
+                    </strong>
+                    <div style="display:flex; gap:8px; align-items:center; font-size:12.5px; color:var(--db-text-dim);">
+                        <span>Budget: <strong style="color:var(--db-text); display:inline;">${formatPeso(totalBudget)}</strong></span>
+                        <span>&bull;</span>
+                        ${statusBadge}
+                    </div>
+                </div>
+                <div>
+                    ${actionBtn}
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    appDashCard.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+            <h3 style="margin:0; font-size:14.5px; font-weight:700; color:var(--db-text);">Annual Procurement Plans (APP)</h3>
+            <span style="font-size:12px; color:var(--db-text-faint);">${apps.length} plan(s) recorded</span>
+        </div>
+        <div>
+            ${itemsHtml}
+        </div>
+    `;
+}
+
 // This gathers the rendering logic so it can be called from the modal
 function refreshDashboardRecords() {
-    const records = getRecords(); // This uses the filtered logic from our previous step
+    const records = getRecords();
 
     if (typeof renderStats === 'function') renderStats(records);
     if (typeof renderActivity === 'function') renderActivity(records);
-    
-    // Entries page: render the table from the same (role-filtered) records.
-    // (Previously called a non-existent renderEntriesTable(), so the table
-    // stayed empty until a filter or search box was touched.)
     if (typeof renderEntries === 'function') renderEntries(records);
 
-    // Update the Notification Dot
+    // Call the dedicated APP views
+    if (typeof renderDashboardAppSection === 'function') renderDashboardAppSection();
+    if (typeof renderEntriesAppSection === 'function') renderEntriesAppSection();
+
+    // Notification Dot
     const notifDot = document.getElementById('notifDot');
-    if (notifDot) {
-        // Show dot if there are any requests waiting for the current user's approval
+    const session = typeof getSession === 'function' ? getSession() : null;
+    if (notifDot && session) {
         const pendingCount = records.filter(canSessionActOnRecord).length;
-        notifDot.classList.toggle('hidden', pendingCount === 0);
+        const hasPendingApp = typeof isAppPendingForUser === 'function' && isAppPendingForUser(session);
+        notifDot.classList.toggle('hidden', pendingCount === 0 && !hasPendingApp);
     }
+}
+
+// ============================================================
+// DEDICATED APP ENTRIES & DASHBOARD SECTIONS
+// Separates APP management from individual PPMP requests
+// ============================================================
+
+// 1. Gather all active APPs (from stored records and approved PPMP years)
+function getAppList() {
+    const allRecords = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const appRecords = typeof getAllAppRecords === 'function' ? getAllAppRecords() : [];
+
+    const yearsFromPpmp = [...new Set(
+        allRecords
+            .filter(r => r && r.status === 'Completed' && /^\d{4}$/.test(String(r.fiscal_year).trim()))
+            .map(r => String(r.fiscal_year).trim())
+    )];
+
+    const appsMap = new Map();
+    appRecords.forEach(app => appsMap.set(String(app.fiscal_year), app));
+    yearsFromPpmp.forEach(year => {
+        if (!appsMap.has(year) && typeof getAppRecord === 'function') {
+            appsMap.set(year, getAppRecord(year));
+        }
+    });
+
+    return Array.from(appsMap.values()).sort((a, b) => Number(b.fiscal_year) - Number(a.fiscal_year));
+}
+
+// 2. Tab switching logic for entries.html
+let activeEntriesTab = 'ppmp';
+
+function switchEntriesTab(tabName) {
+    activeEntriesTab = tabName;
+
+    const ppmpBtn = document.getElementById('tabPpmpBtn');
+    const appBtn = document.getElementById('tabAppBtn');
+    const ppmpContent = document.getElementById('ppmpTabContent');
+    const appContent = document.getElementById('appTabContent');
+
+    if (ppmpBtn) ppmpBtn.classList.toggle('active', tabName === 'ppmp');
+    if (appBtn) appBtn.classList.toggle('active', tabName === 'app');
+
+    if (ppmpContent) ppmpContent.style.display = (tabName === 'ppmp' ? 'block' : 'none');
+    if (appContent) appContent.style.display = (tabName === 'app' ? 'block' : 'none');
+}
+
+// 3. Render APP entries table on entries.html
+function renderEntriesAppSection() {
+    const entriesCard = document.querySelector('.db-entries-card');
+    if (!entriesCard) return; // Not on entries.html
+
+    const allRecords = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const session = typeof getSession === 'function' ? getSession() : null;
+    const apps = typeof getSupplierAppList === 'function' ? getSupplierAppList(allRecords) : [];
+
+    // 1. Setup Tab Navigation and Section Wrappers if not yet created
+    let tabsNav = document.getElementById('entriesTabsNav');
+    let ppmpContent = document.getElementById('ppmpTabContent');
+    let appContent = document.getElementById('appTabContent');
+
+    if (!tabsNav) {
+        tabsNav = document.createElement('div');
+        tabsNav.id = 'entriesTabsNav';
+        tabsNav.className = 'db-entries-tabs';
+        tabsNav.innerHTML = `
+            <button type="button" id="tabPpmpBtn" class="db-tab-btn active" onclick="switchEntriesTab('ppmp')">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+                <span>PPMP Requests</span>
+            </button>
+            <button type="button" id="tabAppBtn" class="db-tab-btn" onclick="switchEntriesTab('app')">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/>
+                    <line x1="16" y1="17" x2="8" y2="17"/>
+                </svg>
+                <span>Annual Procurement Plans (APP)</span>
+            </button>
+        `;
+
+        // Wrap current children of entriesCard into ppmpTabContent
+        ppmpContent = document.createElement('div');
+        ppmpContent.id = 'ppmpTabContent';
+
+        while (entriesCard.firstChild) {
+            ppmpContent.appendChild(entriesCard.firstChild);
+        }
+
+        // Create container for the APP table
+        appContent = document.createElement('div');
+        appContent.id = 'appTabContent';
+        appContent.style.display = 'none';
+
+        // Reassemble inside entriesCard
+        entriesCard.appendChild(tabsNav);
+        entriesCard.appendChild(ppmpContent);
+        entriesCard.appendChild(appContent);
+
+        // For Suppliers, open the APP tab by default
+        if (session && session.role === 'SUP') {
+            switchEntriesTab('app');
+        }
+    }
+
+    // 2. Render APP Table Body
+    if (apps.length === 0) {
+        appContent.innerHTML = `
+            <div class="db-entries-empty" style="padding: 36px 18px; text-align: center;">
+                <p style="margin: 0; font-size: 14px; color: var(--db-text-dim);">
+                    No Annual Procurement Plans available yet. Fully approve PPMPs to compile the plan.
+                </p>
+            </div>
+        `;
+        return;
+    }
+
+    const rowsHtml = apps.map(app => {
+        const totalBudget = getAppTotalBudgetForYear(app.fiscal_year, allRecords);
+        const isCompleted = app.status === 'Completed';
+
+        let statusBadge = '<span class="db-status-pill is-draft">Draft</span>';
+        if (isCompleted) {
+            statusBadge = '<span class="db-status-pill is-completed">Final (Approved)</span>';
+        } else if (app.status === 'For Approval') {
+            const roleName = app.currentApproverRole === 'ARD' ? 'ARD' : 'RD';
+            statusBadge = `<span class="db-status-pill is-pending">Under Review (${roleName})</span>`;
+        } else if (app.returned_for_revision) {
+            statusBadge = '<span class="db-status-pill is-returned">Returned</span>';
+        }
+
+        const typeBadge = isCompleted 
+            ? '<span class="db-status-pill is-type-final">Final</span>' 
+            : '<span class="db-status-pill is-type-indicative">Indicative</span>';
+
+        const submittedInfo = app.submitted_by 
+            ? `<strong>${escapeHtml(app.submitted_by.name)}</strong><span>${formatApprovalDate(app.submitted_at)}</span>` 
+            : '<span class="db-approver-none">—</span>';
+
+        const endorsedInfo = app.ard_approved_by 
+            ? `<strong>${escapeHtml(app.ard_approved_by.name)}</strong><span>${formatApprovalDate(app.ard_approved_at)}</span>` 
+            : '<span class="db-approver-none">—</span>';
+
+        const approvedInfo = app.approved_by 
+            ? `<strong>${escapeHtml(app.approved_by.name)}</strong><span>${formatApprovalDate(app.approved_at)}</span>` 
+            : '<span class="db-approver-none">—</span>';
+
+        let actionBtn = `
+            <button type="button" class="db-action-btn" title="View APP" onclick="runPreviewApp('${app.fiscal_year}')" style="padding: 6px 14px; font-size: 12px; font-weight: 600; width: auto; height: auto;">
+                View APP
+            </button>
+        `;
+        if (session && session.role === 'ARD' && app.status === 'For Approval' && app.currentApproverRole === 'ARD') {
+            actionBtn = `
+                <button type="button" class="db-action-btn" title="Review (ARD)" onclick="runPreviewApp('${app.fiscal_year}')" style="padding: 6px 14px; font-size: 12px; font-weight: 600; width: auto; height: auto; background: var(--db-accent); color: #fff; border-color: var(--db-accent);">
+                    Review (ARD) &rarr;
+                </button>
+            `;
+        } else if (session && session.role === 'RD' && app.status === 'For Approval' && app.currentApproverRole === 'RD') {
+            actionBtn = `
+                <button type="button" class="db-action-btn" title="Review (RD)" onclick="runPreviewApp('${app.fiscal_year}')" style="padding: 6px 14px; font-size: 12px; font-weight: 600; width: auto; height: auto; background: var(--db-accent); color: #fff; border-color: var(--db-accent);">
+                    Review (RD) &rarr;
+                </button>
+            `;
+        } else if (isCompleted) {
+            actionBtn = `
+                <div style="display:flex; gap:6px;">
+                    <button type="button" class="db-action-btn" title="View APP" onclick="runPreviewApp('${app.fiscal_year}')" style="padding: 6px 14px; font-size: 12px; font-weight: 600; width: auto; height: auto;">
+                        View
+                    </button>
+                    <button type="button" class="db-action-btn" title="Download PDF" onclick="generateAPP_PDF('${app.fiscal_year}')" style="padding: 6px 14px; font-size: 12px; font-weight: 600; width: auto; height: auto; background: var(--db-accent); color: #fff; border-color: var(--db-accent);">
+                        PDF
+                    </button>
+                </div>
+            `;
+        }
+
+        return `
+            <tr>
+                <td><strong>FY ${escapeHtml(app.fiscal_year)}</strong></td>
+                <td class="db-entry-description" style="max-width:320px;">
+                    <strong style="color:var(--db-text);">Annual Procurement Plan for FY ${escapeHtml(app.fiscal_year)}</strong>
+                    <span>Master Consolidated Plan</span>
+                </td>
+                <td><strong>${formatPeso(totalBudget)}</strong></td>
+                <td>${statusBadge}</td>
+                <td>${typeBadge}</td>
+                <td><div class="db-approver">${submittedInfo}</div></td>
+                <td><div class="db-approver">${endorsedInfo}</div></td>
+                <td><div class="db-approver">${approvedInfo}</div></td>
+                <td>${actionBtn}</td>
+            </tr>
+        `;
+    }).join('');
+
+    appContent.innerHTML = `
+        <div class="db-section-head" style="margin-bottom: 16px;">
+            <div>
+                <h3>Annual Procurement Plans (APP)</h3>
+                <p>Consolidated annual procurement plans across all implementing units</p>
+            </div>
+            <div style="color:var(--db-text-faint); font-size:12.5px;">
+                ${apps.length} plan(s) recorded
+            </div>
+        </div>
+        <div class="db-entries-table-wrap">
+            <table class="db-entries-table">
+                <thead>
+                    <tr>
+                        <th>Fiscal Year</th>
+                        <th>Plan Title</th>
+                        <th>Approved Budget</th>
+                        <th>Status</th>
+                        <th>Type</th>
+                        <th>Submitted By</th>
+                        <th>Endorsed By (ARD)</th>
+                        <th>Approved By (RD)</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rowsHtml}
+                </tbody>
+            </table>
+        </div>
+    `;
 }
 
 // 3. Event Listener for the actual "Delete" button inside the popup
@@ -3176,6 +3651,7 @@ document.addEventListener('DOMContentLoaded', function () {
     initThemeToggle();
     initEntryFilters();
     refreshDashboardRecords();
+    renderAppExportButton();
 
     const openRecordId = sessionStorage.getItem('open_record_id');
     const shouldOpenNewRequest = sessionStorage.getItem('open_new_request') === '1';
@@ -3202,6 +3678,10 @@ document.addEventListener('DOMContentLoaded', function () {
             openRequestModal();
         }, 0);
     }
+
+    if (typeof renderEntriesAppSection === 'function') renderEntriesAppSection();
+    if (typeof renderDashboardAppSection === 'function') renderDashboardAppSection();
+
 });
 
 

@@ -1174,6 +1174,40 @@ html[data-theme="light"] .approval-info strong { color: #15803D; }
     animation: entry-expand-in 0.18s ease;
 }
 
+/* Entries Tab Switcher */
+.db-entries-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    border-bottom: 2px solid var(--border-color, #334155);
+    padding-bottom: 8px;
+}
+
+.db-tab-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    background: transparent;
+    border: none;
+    color: var(--text-muted, #94a3b8);
+    transition: all 0.2s ease;
+}
+
+.db-tab-btn:hover {
+    color: var(--text-primary, #ffffff);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.db-tab-btn.active {
+    color: #ffffff;
+    background: var(--db-accent, #2563eb);
+}
+
 /* The hover tint on .db-entries-table rows must not paint the dropdown */
 .db-entries-table tbody tr.db-entry-expand-row:hover {
     background: transparent;
