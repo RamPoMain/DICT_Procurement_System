@@ -1252,6 +1252,91 @@ function saveAppRecord(record) {
     }
 }
 
+// ------------------------------------------------------------
+// WHICH PPMPs GO INTO THE APP
+// The APP of a fiscal year uses only the LATEST fully approved (Completed)
+// PPMP of each office: when an office has more than one approved PPMP for
+// that year (No. 1, No. 2, ...), the newer one replaces the older ones, so
+// the same office is never counted twice.
+// "Latest" = most recently approved (approved_at; records saved before that
+// field existed fall back to their creation time), then the higher PPMP No.
+// ------------------------------------------------------------
+
+function ppmpApprovalOrder(record) {
+    return Number(record.approved_at) || Number(record.id) || 0;
+}
+
+function isApprovedLaterThan(a, b) {
+    const diff = ppmpApprovalOrder(a) - ppmpApprovalOrder(b);
+    if (diff !== 0) return diff > 0;
+    return (parseInt(a.ppmp_no, 10) || 0) > (parseInt(b.ppmp_no, 10) || 0);
+}
+
+// Returns one PPMP record per office (the latest approved one) for the fiscal
+// year. Pass null/undefined as the year to ignore the year.
+function getLatestApprovedPpmpPerOffice(records, fiscalYear) {
+    const latestByOffice = new Map();
+
+    (records || []).forEach(record => {
+        if (!record || record.status !== 'Completed') return;
+        if (fiscalYear != null && String(record.fiscal_year) !== String(fiscalYear)) return;
+
+        const office = record.end_user || 'N/A';
+        const current = latestByOffice.get(office);
+        if (!current || isApprovedLaterThan(record, current)) {
+            latestByOffice.set(office, record);
+        }
+    });
+
+    return Array.from(latestByOffice.values());
+}
+
+// ------------------------------------------------------------
+// FISCAL YEAR ROLLOVER
+// Once the APP of the CURRENT fiscal year is Final, that year's planning is
+// closed, so the next PPMP defaults to the following year (and keeps rolling
+// forward if that year's APP is final too). Nothing is stored: it is worked
+// out from the APP records each time, so it takes effect the moment the RD
+// marks the APP Final.
+// ------------------------------------------------------------
+
+function isAppFinal(fiscalYear) {
+    return getAppRecord(fiscalYear).status === 'Completed';
+}
+
+// Year a NEW PPMP should be pre-filled with, or null when the current
+// year's APP is not Final yet (the user then types the year, as before).
+function getDefaultNewPpmpFiscalYear() {
+    let year = new Date().getFullYear();
+    if (!isAppFinal(year)) return null;
+
+    while (year < 2100 && isAppFinal(year)) year++;
+    return String(year);
+}
+
+// First fiscal year after `afterYear` whose APP is not Final yet.
+function getNextOpenFiscalYear(afterYear) {
+    let year = (parseInt(afterYear, 10) || new Date().getFullYear()) + 1;
+    while (year < 2100 && isAppFinal(year)) year++;
+    return String(year);
+}
+
+// Fiscal year the Generate/Preview APP button works on: the earliest year
+// that has approved PPMPs and whose APP is not Final yet. Once every such
+// year is Final it stays on the latest one. (It used to take the year of the
+// oldest approved PPMP, which would stay on a Final APP forever after the
+// rollover above starts producing PPMPs for the next year.)
+function getDefaultAppFiscalYear(records) {
+    const years = [...new Set(
+        (records || [])
+            .filter(r => r && r.status === 'Completed' && /^\d{4}$/.test(String(r.fiscal_year).trim()))
+            .map(r => String(r.fiscal_year).trim())
+    )].sort();
+
+    if (years.length === 0) return new Date().getFullYear();
+    return years.find(y => !isAppFinal(y)) || years[years.length - 1];
+}
+
 function isAppPendingForUser(session) {
     if (!session) return false;
     const all = getAllAppRecords();
@@ -1540,6 +1625,13 @@ function performAppReviewAction(fiscalYear, action) {
     }
 
     saveAppRecord(record);
+
+    // A Final APP closes the year: say what new PPMPs will start with now.
+    if (record.status === 'Completed') {
+        const nextYear = getDefaultNewPpmpFiscalYear();
+        if (nextYear) message += ` New PPMPs will now start in FY ${nextYear}.`;
+    }
+
     showToast(message);
     runPreviewApp();
     renderAppExportButton();
@@ -1572,8 +1664,7 @@ async function runPreviewApp() {
 async function runGenerateApp() {
     const session = typeof getSession === 'function' ? getSession() : null;
     const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
-    const approved = records.filter(r => r.status === 'Completed');
-    const year = approved[0] ? approved[0].fiscal_year : new Date().getFullYear();
+    const year = getDefaultAppFiscalYear(records);
     const appRec = getAppRecord(year);
 
     // If not yet fully approved, opening the preview modal shows review state
@@ -1623,8 +1714,7 @@ function renderAppExportButton() {
 
     // Get current APP status for the label
     const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
-    const approved = records.filter(r => r.status === 'Completed');
-    const year = approved[0] ? approved[0].fiscal_year : new Date().getFullYear();
+    const year = getDefaultAppFiscalYear(records);
     const appRec = getAppRecord(year);
 
     let labelText = `Annual Procurement Plan (APP)`;

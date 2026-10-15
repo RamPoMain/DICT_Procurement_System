@@ -224,12 +224,22 @@ function clearAllFieldErrors() {
 // PPMP NUMBER AUTO-INCREMENT
 // ============================================================
 
-// Every office numbers its PPMPs from 1, independently of the others.
-// An office's "last approved number" is also remembered in its own counter
-// (localStorage 'ppmp_number_counters'), so deleting an approved PPMP can never
-// make its number come around again. Drafts and returned PPMPs don't move the
-// counter - only an approval does.
+// PPMP numbers restart at 1 for every fiscal year, and every office numbers
+// its PPMPs independently. So PPMP No. 4 of FY 2026 and PPMP No. 1 of FY 2027
+// can both exist for the same office. Choosing a year that already has PPMPs
+// continues that year's numbering (FY 2026 -> No. 5 after No. 4); a year with
+// none yet (e.g. next year's plan) starts at No. 1.
+//
+// The last approved number is also remembered per office + year in
+// localStorage 'ppmp_number_counters_by_year' ("<office>|<year>" -> number), so
+// deleting an approved PPMP can never make its number come around again.
+// Drafts and returned PPMPs don't move the counter - only an approval does.
+//
+// 'ppmp_number_counters' is the OLD counter (per office, no year). It is still
+// read, but only as a floor for the current calendar year, because every
+// number it recorded was issued before numbering became per-year.
 const PPMP_COUNTER_KEY = 'ppmp_number_counters';
+const PPMP_YEAR_COUNTER_KEY = 'ppmp_number_counters_by_year';
 
 function readPpmpCounters() {
     try {
@@ -240,25 +250,77 @@ function readPpmpCounters() {
     }
 }
 
+function readPpmpYearCounters() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(PPMP_YEAR_COUNTER_KEY));
+        return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+function ppmpYearCounterKey(office, year) {
+    return office + '|' + year;
+}
+
+// Returns the year as a 4-digit string, or '' when it isn't one.
+function normalizeFiscalYear(value) {
+    const text = String(value == null ? '' : value).trim();
+    return /^\d{4}$/.test(text) ? text : '';
+}
+
+// A fiscal year is CLOSED once its APP is Final: no PPMP can be filed under it
+// any more. Returns the message to show when the PPMP in the form would land in
+// a closed year, or '' when that's fine. It only blocks CREATING in a closed
+// year - a brand-new PPMP, or an existing draft whose year is being CHANGED to
+// a closed one. Drafts that already sit in a closed year are left as they are
+// (they can still be edited and get entries added).
+function getClosedFiscalYearMessage(yearText) {
+    const year = normalizeFiscalYear(yearText);
+    if (!year || isViewMode) return '';
+    if (typeof isAppFinal !== 'function' || !isAppFinal(year)) return '';
+
+    if (currentEditingId) {
+        // Existing PPMP: only an actual change of year is blocked.
+        const record = (JSON.parse(localStorage.getItem('procurement_records')) || [])
+            .find(r => r.id == currentEditingId);
+        if (!record || String(record.fiscal_year) === year) return '';
+    } else if (!ppmpNumberFollowsYear) {
+        return '';   // adding an entry to a PPMP: its year is fixed by the PPMP
+    }
+
+    const next = typeof getNextOpenFiscalYear === 'function'
+        ? getNextOpenFiscalYear(year)
+        : String(Number(year) + 1);
+    return 'The APP for FY ' + year + ' is already Final, so PPMPs can no longer be filed under that year. Use FY ' + next + ' or later.';
+}
+
 // Called when a PPMP is fully approved (see performReviewAction).
 function recordApprovedPpmpNumber(record) {
     if (!record) return;
     const number = parseInt(record.ppmp_no, 10);
-    if (isNaN(number)) return;
+    const year = normalizeFiscalYear(record.fiscal_year);
+    if (isNaN(number) || !year) return;
 
     const office = record.end_user || 'N/A';
-    const counters = readPpmpCounters();
-    if (number > (Number(counters[office]) || 0)) {
-        counters[office] = number;
+    const key = ppmpYearCounterKey(office, year);
+    const counters = readPpmpYearCounters();
+    if (number > (Number(counters[key]) || 0)) {
+        counters[key] = number;
         try {
-            localStorage.setItem(PPMP_COUNTER_KEY, JSON.stringify(counters));
+            localStorage.setItem(PPMP_YEAR_COUNTER_KEY, JSON.stringify(counters));
         } catch (e) {
             console.warn('Could not save the PPMP number counter', e);
         }
     }
 }
 
-function getNextPpmpNumber() {
+// Next PPMP number for the signed-in office in the given fiscal year.
+// Without a valid year it falls back to the current calendar year.
+function getNextPpmpNumber(fiscalYear) {
+    const currentYear = String(new Date().getFullYear());
+    const year = normalizeFiscalYear(fiscalYear) || currentYear;
+
     const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
 
     const session = typeof getSession === 'function' ? getSession() : null;
@@ -266,28 +328,47 @@ function getNextPpmpNumber() {
 
     let highest = 0;
 
-    // Highest approved number still on record for this office...
+    // Highest approved number still on record for this office in this year...
     records.forEach(record => {
         if (record.status !== 'Completed') return;
         if (office && record.end_user !== office) return;
+        if (normalizeFiscalYear(record.fiscal_year) !== year) return;
         const number = parseInt(record.ppmp_no, 10);
         if (!isNaN(number) && number > highest) highest = number;
     });
 
-    // ...or the office's remembered counter, whichever is higher.
-    const counters = readPpmpCounters();
+    // ...or the remembered counter for this office + year, whichever is higher.
+    const yearCounters = readPpmpYearCounters();
     if (office) {
-        highest = Math.max(highest, Number(counters[office]) || 0);
+        highest = Math.max(highest, Number(yearCounters[ppmpYearCounterKey(office, year)]) || 0);
     } else {
-        // Accounts without an office fall back to counting everything.
-        Object.keys(counters).forEach(key => {
-            highest = Math.max(highest, Number(counters[key]) || 0);
+        // Accounts without an office fall back to counting every office.
+        Object.keys(yearCounters).forEach(key => {
+            if (key.slice(-(year.length + 1)) === '|' + year) {
+                highest = Math.max(highest, Number(yearCounters[key]) || 0);
+            }
         });
+    }
+
+    // Old per-office counter: only counts toward the current year (see top).
+    if (year === currentYear) {
+        const legacy = readPpmpCounters();
+        if (office) {
+            highest = Math.max(highest, Number(legacy[office]) || 0);
+        } else {
+            Object.keys(legacy).forEach(key => {
+                highest = Math.max(highest, Number(legacy[key]) || 0);
+            });
+        }
     }
 
     return highest + 1;
 }
 
+
+// True while the PPMP No. field should follow the Fiscal Year field (a brand
+// new PPMP). False when the number is fixed by an existing PPMP.
+let ppmpNumberFollowsYear = false;
 
 function initializePpmpNumber() {
 
@@ -304,28 +385,76 @@ function initializePpmpNumber() {
 
     if (viewId) return;
 
-    ppmpField.value =
-        getNextPpmpNumber();
+    // The number depends on the fiscal year, which the user types in next,
+    // so it stays blank until a valid year is entered
+    // (see refreshPpmpNumberForYear).
+    ppmpNumberFollowsYear = true;
+    ppmpField.value = '';
+    ppmpField.placeholder = 'Enter Fiscal Year first';
 
     // User should not manually change the generated number
     ppmpField.readOnly = true;
 }
 
+// Re-generates the PPMP No. whenever the Fiscal Year field changes.
+function refreshPpmpNumberForYear() {
+    const ppmpField = document.getElementById('ppmp_no');
+    const yearField = document.getElementById('fiscal_year');
+    if (!ppmpField || !yearField) return;
+
+    if (!ppmpNumberFollowsYear || isViewMode || currentEditingId) return;
+
+    const year = normalizeFiscalYear(yearField.value);
+    const yearNumber = parseInt(year, 10);
+
+    if (!year || yearNumber < 2000 || yearNumber > 2100) {
+        ppmpField.value = '';
+        return;
+    }
+
+    // No number is handed out for a year whose APP is Final.
+    if (getClosedFiscalYearMessage(year)) {
+        ppmpField.value = '';
+        return;
+    }
+
+    ppmpField.value = getNextPpmpNumber(year);
+    if (typeof clearFieldError === 'function') clearFieldError('ppmp_no');
+}
+
+// Returns the year it pre-filled (see below), or '' when it left the field blank.
 function initializeFiscalYear() {
     const fiscalYearField = document.getElementById('fiscal_year');
-    if (!fiscalYearField) return;
+    if (!fiscalYearField) return '';
 
-    if (isViewMode || currentEditingId) return;
+    if (isViewMode || currentEditingId) return '';
 
-    const currentYear = new Date().getFullYear();
-    fiscalYearField.value = currentYear; 
+    // Fiscal year is normally typed in by the user: start blank and editable;
+    // validation still requires 4 digits.
+    fiscalYearField.value = '';
+    fiscalYearField.readOnly = false;
+    fiscalYearField.maxLength = 4;
+    fiscalYearField.setAttribute('inputmode', 'numeric');
+    fiscalYearField.placeholder = 'e.g. ' + new Date().getFullYear();
+    fiscalYearField.title = '';
+    fiscalYearField.style.backgroundColor = '';
+    fiscalYearField.style.cursor = '';
 
-    // THE FIX: Prevent user interaction
-    fiscalYearField.readOnly = true;
-    
-    // Optional: Add a style so it looks non-interactive (grayish)
-    fiscalYearField.style.backgroundColor = "var(--bg-main)";
-    fiscalYearField.style.cursor = "default";
+    // Exception: once the APP of the current fiscal year is Final, a new PPMP
+    // starts in the NEXT year. It stays editable, and the PPMP No. follows it
+    // (No. 1 for a year with no approved PPMPs yet).
+    const rollover = typeof getDefaultNewPpmpFiscalYear === 'function'
+        ? getDefaultNewPpmpFiscalYear()
+        : null;
+
+    if (rollover) {
+        fiscalYearField.value = rollover;
+        fiscalYearField.title = 'The APP for FY ' + (Number(rollover) - 1) + ' is already Final, so new PPMPs start in FY ' + rollover + '.';
+        refreshPpmpNumberForYear();
+        return rollover;
+    }
+
+    return '';
 }
 
 
@@ -381,7 +510,7 @@ function startNewRequest() {
     const draftRecords = records.filter(r => getPpmpStatus(r) === 'Draft');
     if (draftRecords.length > 0) {
         const targetPpmpNo = draftRecords[0].ppmp_no || '1';
-        addEntryToPpmp(targetPpmpNo);
+        addEntryToPpmp(targetPpmpNo, draftRecords[0].fiscal_year);
         return;
     }
 
@@ -669,6 +798,18 @@ function saveProcurementRequest() {
     if (typeof validateDeliveryDateMatch === 'function' && !validateDeliveryDateMatch()) {
         showStep2(); // Bring user back to Step 2 to see the date error
         showToast('Please check the End Date and Delivery Period.');
+        return;
+    }
+
+    // The APP for this fiscal year may have become Final while the form was
+    // open (or the year was changed after Step 1): don't save into a closed year.
+    const closedYearMessage = getClosedFiscalYearMessage(
+        (document.getElementById('fiscal_year') || {}).value
+    );
+    if (closedYearMessage) {
+        showStep1();
+        showFieldError('fiscal_year', closedYearMessage);
+        showToast(closedYearMessage);
         return;
     }
 
@@ -1106,6 +1247,20 @@ function validateIndividualField(fieldGroup) {
             showFieldError(
                 fieldName,
                 'Fiscal Year must be between 2000 and 2100.'
+            );
+
+            return false;
+        }
+
+        // The APP for this year is already Final: it can't take new PPMPs.
+        const closedYearMessage =
+            getClosedFiscalYearMessage(value);
+
+        if (closedYearMessage) {
+
+            showFieldError(
+                fieldName,
+                closedYearMessage
             );
 
             return false;
@@ -2794,7 +2949,12 @@ function openRequestModal(id = null) {
 
         try { enableModalFields(); } catch (e) { console.warn(e); }
         try { initializePpmpNumber(); } catch (e) { console.warn(e); }
-        try { initializeFiscalYear(); } catch (e) { console.warn(e); }
+        try {
+            const rolledYear = initializeFiscalYear();
+            if (rolledYear && typeof showToast === 'function') {
+                showToast('The APP for FY ' + (Number(rolledYear) - 1) + ' is Final, so this PPMP starts in FY ' + rolledYear + '.');
+            }
+        } catch (e) { console.warn(e); }
 
         const finishBtn = document.getElementById('finishBtn');
         if (finishBtn) {
@@ -2805,13 +2965,17 @@ function openRequestModal(id = null) {
 }
 
 
-function addEntryToPpmp(ppmpNo) {
+function addEntryToPpmp(ppmpNo, fiscalYear) {
     // 1. Reset form fields cleanly
     try {
         resetRequestForm();
     } catch (err) {
         console.warn("resetRequestForm issue:", err);
     }
+
+    // The number belongs to the parent PPMP here, so it must not follow the
+    // Fiscal Year field (resetRequestForm() switched that on).
+    ppmpNumberFollowsYear = false;
 
     // 2. Make modal visible
     const overlay = document.getElementById('requestModalOverlay');
@@ -2830,8 +2994,11 @@ function addEntryToPpmp(ppmpNo) {
     const lookupOffice = lookupSession && lookupSession.office ? lookupSession.office : null;
     const allRecords = (JSON.parse(localStorage.getItem('procurement_records')) || [])
         .filter(r => !lookupOffice || r.end_user === lookupOffice);
-    const groupRecord = allRecords.find(r => String(r.ppmp_no) === String(ppmpNo) && getPpmpStatus(r) === 'Draft')
-        || allRecords.find(r => String(r.ppmp_no) === String(ppmpNo));
+    // PPMP numbers restart every fiscal year, so when the caller knows the
+    // year, the lookup must match it too (e.g. No. 1 exists in 2026 AND 2027).
+    const sameYear = r => !fiscalYear || String(r.fiscal_year) === String(fiscalYear);
+    const groupRecord = allRecords.find(r => String(r.ppmp_no) === String(ppmpNo) && sameYear(r) && getPpmpStatus(r) === 'Draft')
+        || allRecords.find(r => String(r.ppmp_no) === String(ppmpNo) && sameYear(r));
 
     currentEditingId = groupRecord ? groupRecord.id : null;
     currentEditingItemId = null; // null means saving will append a new item
@@ -2853,8 +3020,11 @@ function addEntryToPpmp(ppmpNo) {
 
     const fiscalYearField = document.getElementById('fiscal_year');
     if (fiscalYearField) {
-        fiscalYearField.value = (groupRecord && groupRecord.fiscal_year) || new Date().getFullYear();
-        fiscalYearField.readOnly = true;
+        // Adding an entry to an existing PPMP: the year is fixed by the parent PPMP.
+        fiscalYearField.value = (groupRecord && groupRecord.fiscal_year) || '';
+        fiscalYearField.readOnly = !!(groupRecord && groupRecord.fiscal_year);
+        fiscalYearField.style.backgroundColor = '';
+        fiscalYearField.style.cursor = '';
     }
 
     const endUserField = document.getElementById('end_user');
@@ -3534,7 +3704,7 @@ function enableModalFields() {
     document.getElementById('strategiesTrigger').style.pointerEvents = 'auto';
 
     document.getElementById('ppmp_no').readOnly = true;
-    document.getElementById('fiscal_year').readOnly = true; // <--- ADD THIS LINE
+    document.getElementById('fiscal_year').readOnly = false; // typed manually; addEntryToPpmp() re-locks it for existing PPMPs
 
     // End-User/Implementing Unit is always the signed-in office — never
     // free-typed, so filtering in getRecords() stays an exact match.
@@ -3728,6 +3898,12 @@ document.addEventListener('DOMContentLoaded', function () {
         restrictNumberOnly('ppmp_no');
         restrictNumberOnly('fiscal_year');
         restrictDecimalNumber('budget');
+
+        // PPMP No. follows the Fiscal Year: typing a year re-numbers the PPMP.
+        const fiscalYearInput = document.getElementById('fiscal_year');
+        if (fiscalYearInput) {
+            fiscalYearInput.addEventListener('input', refreshPpmpNumberForYear);
+        }
 
         renderTags(
             document.getElementById('selectedTags')

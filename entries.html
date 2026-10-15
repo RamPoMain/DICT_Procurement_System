@@ -71,7 +71,7 @@
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M2.5 12C4.4 8 7.9 5.5 12 5.5C16.1 5.5 19.6 8 21.5 12C19.6 16 16.1 18.5 12 18.5C7.9 18.5 4.4 16 2.5 12Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6"/></svg>
                     <span class="db-app-label">Preview APP</span>
                 </button>
-                <button type="button" id="entriesAppBtn" class="db-app-btn" data-app-entry-btn style="display:none;" onclick="runGenerateApp()" title="Generate the Annual Procurement Plan from all approved PPMPs">
+                <button type="button" id="entriesAppBtn" class="db-app-btn" data-app-entry-btn style="display:none;" onclick="runGenerateApp()" title="Generate the Annual Procurement Plan from each office's latest approved PPMP">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M7 3.5H14L18 7.5V19.5C18 20.05 17.55 20.5 17 20.5H7C6.45 20.5 6 20.05 6 19.5V4.5C6 3.95 6.45 3.5 7 3.5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 3.5V7.5H18" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 11V16M12 16L9.8 13.8M12 16L14.2 13.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                     <span class="db-app-label">Generate APP</span>
                 </button>
@@ -221,7 +221,7 @@
                         </div>
                         <div class="field-group" data-field="fiscal_year">
                             <label>Fiscal Year</label>
-                            <input type="text" id="fiscal_year" placeholder="Field text goes here" required>
+                            <input type="text" id="fiscal_year" placeholder="e.g. 2026" maxlength="4" inputmode="numeric" required>
                             <p class="field-error-msg">This field is required</p>
                         </div>
                         <div class="field-group" data-field="project_type">

@@ -356,8 +356,16 @@ async function buildAPP_PDF(targetYear = null) {
     }
 
     // Determine Fiscal Year
-    const fiscalYear = targetYear || approvedRecords[0].fiscal_year || new Date().getFullYear();
-    const relevantRecords = approvedRecords.filter(r => !targetYear || String(r.fiscal_year) === String(targetYear));
+    const fiscalYear = targetYear
+        || (typeof getDefaultAppFiscalYear === 'function' ? getDefaultAppFiscalYear(records) : approvedRecords[0].fiscal_year)
+        || new Date().getFullYear();
+
+    // Only the latest approved PPMP of each office goes into the APP (for this
+    // fiscal year). Falls back to every approved PPMP if the helper from
+    // dashboard-logic.js isn't loaded on the page.
+    const relevantRecords = typeof getLatestApprovedPpmpPerOffice === 'function'
+        ? getLatestApprovedPpmpPerOffice(approvedRecords, fiscalYear)
+        : approvedRecords.filter(r => !targetYear || String(r.fiscal_year) === String(targetYear));
 
     // Retrieve the APP approval state for this Fiscal Year
     const appRecord = typeof getAppRecord === 'function' ? getAppRecord(fiscalYear) : null;

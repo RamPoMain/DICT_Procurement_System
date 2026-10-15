@@ -821,6 +821,16 @@
             return false;
         }
 
+        // A new PPMP can't be created under a fiscal year whose APP is Final.
+        if (!isAddingToExisting() && typeof getClosedFiscalYearMessage === 'function') {
+            var closedMsg = getClosedFiscalYearMessage(header.fiscal_year || String(new Date().getFullYear()));
+            if (closedMsg) {
+                if (typeof showFieldError === 'function') showFieldError('fiscal_year', closedMsg);
+                toast(closedMsg);
+                return false;
+            }
+        }
+
         var stamp = Date.now();
         var stamped = items.map(function (item, i) {
             return Object.assign({ id: stamp + i }, item);
@@ -843,7 +853,7 @@
             db[db.findIndex(function (r) { return r.id == currentEditingId; })] = updated;
             ppmpNo = updated.ppmp_no;
         } else {
-            ppmpNo = header.ppmp_no || (typeof getNextPpmpNumber === 'function' ? String(getNextPpmpNumber()) : 'N/A');
+            ppmpNo = header.ppmp_no || (typeof getNextPpmpNumber === 'function' ? String(getNextPpmpNumber(header.fiscal_year)) : 'N/A');
             db.push({
                 id: stamp,
                 creatorId: session ? session.id : null,
