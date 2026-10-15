@@ -852,16 +852,27 @@
             var updated = Object.assign({}, existing, { items: merged });
             db[db.findIndex(function (r) { return r.id == currentEditingId; })] = updated;
             ppmpNo = updated.ppmp_no;
+            
         } else {
             ppmpNo = header.ppmp_no || (typeof getNextPpmpNumber === 'function' ? String(getNextPpmpNumber(header.fiscal_year)) : 'N/A');
+            var office = header.end_user || (session && session.office) || 'N/A';
+            var fiscalYear = header.fiscal_year || String(new Date().getFullYear());
+
+            // Carry over items from previous approved version if one exists
+            var prevApproved = typeof getLatestApprovedPpmpForOffice === 'function'
+                ? getLatestApprovedPpmpForOffice(office, fiscalYear)
+                : null;
+            var initialItems = prevApproved ? clonePpmpItemsForCarryOver(prevApproved, stamp) : [];
+            var finalItems = initialItems.concat(stamped);
+
             db.push({
                 id: stamp,
                 creatorId: session ? session.id : null,
                 ppmp_no: ppmpNo,
                 is_indicative: header.is_indicative,
-                end_user: header.end_user || (session && session.office) || 'N/A',
-                fiscal_year: header.fiscal_year || String(new Date().getFullYear()),
-                items: stamped,
+                end_user: office,
+                fiscal_year: fiscalYear,
+                items: finalItems,
                 status: 'Draft',
                 currentApproverRole: null,
                 remarksHistory: [],

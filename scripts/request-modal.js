@@ -365,6 +365,48 @@ function getNextPpmpNumber(fiscalYear) {
     return highest + 1;
 }
 
+// ============================================================
+// VERSION CARRY-OVER HELPERS
+// Carries over approved line items from previous versions (v1 -> v2 -> v3)
+// ============================================================
+
+function getLatestApprovedPpmpForOffice(office, fiscalYear) {
+    if (!office || !fiscalYear) return null;
+    const year = normalizeFiscalYear(fiscalYear);
+    const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    
+    const approved = records.filter(r =>
+        r && r.status === 'Completed' &&
+        r.end_user === office &&
+        normalizeFiscalYear(r.fiscal_year) === year
+    );
+
+    if (approved.length === 0) return null;
+
+    // Pick the highest approved PPMP No. for this office and year
+    approved.sort((a, b) => {
+        const numA = parseInt(a.ppmp_no, 10) || 0;
+        const numB = parseInt(b.ppmp_no, 10) || 0;
+        if (numB !== numA) return numB - numA;
+        return (Number(b.approved_at) || Number(b.id) || 0) - (Number(a.approved_at) || Number(a.id) || 0);
+    });
+
+    return approved[0];
+}
+
+function clonePpmpItemsForCarryOver(sourceRecord, newBaseTimestamp) {
+    if (!sourceRecord) return [];
+    const items = typeof getRecordItems === 'function' ? getRecordItems(sourceRecord) : (sourceRecord.items || []);
+    const base = newBaseTimestamp || Date.now();
+    
+    return items.map((item, idx) => {
+        const cloned = JSON.parse(JSON.stringify(item));
+        // Assign a fresh unique ID so editing in the new version does not mutate the old version
+        cloned.id = base + idx + 1;
+        return cloned;
+    });
+}
+
 
 // True while the PPMP No. field should follow the Fiscal Year field (a brand
 // new PPMP). False when the number is fixed by an existing PPMP.
@@ -412,14 +454,28 @@ function refreshPpmpNumberForYear() {
         return;
     }
 
-    // No number is handed out for a year whose APP is Final.
     if (getClosedFiscalYearMessage(year)) {
         ppmpField.value = '';
         return;
     }
 
-    ppmpField.value = getNextPpmpNumber(year);
+    const nextNo = getNextPpmpNumber(year);
+    ppmpField.value = nextNo;
     if (typeof clearFieldError === 'function') clearFieldError('ppmp_no');
+
+    // Inform user if items from a previous approved version will carry over
+    const session = typeof getSession === 'function' ? getSession() : null;
+    const office = session ? session.office : null;
+    if (office && nextNo > 1) {
+        const prev = getLatestApprovedPpmpForOffice(office, year);
+        if (prev) {
+            const count = (typeof getRecordItems === 'function' ? getRecordItems(prev) : (prev.items || [])).length;
+            const hint = document.getElementById('docTypeHint');
+            if (hint) {
+                hint.innerText = `Version ${nextNo}: ${count} approved item(s) from PPMP No. ${prev.ppmp_no} will carry over into this plan.`;
+            }
+        }
+    }
 }
 
 // Returns the year it pre-filled (see below), or '' when it left the field blank.
@@ -961,30 +1017,41 @@ function saveProcurementRequest() {
         items:         items
 });
     } else {
+        // Define the timestamp ID for the new PPMP
+        const stamp = Date.now();
 
         const session = typeof getSession === 'function' ? getSession() : null;
-        // Brand-new PPMP, with this as its first line item.
+        const office = document.getElementById('end_user').value || (session ? session.office : 'N/A');
+        const fiscalYear = document.getElementById('fiscal_year').value;
+        const ppmpNo = document.getElementById('ppmp_no').value || 'N/A';
+
+        // ----------------------------------------------------
+        // VERSION CARRY-OVER LOGIC:
+        // Carry over all approved items from the previous version of this year
+        // ----------------------------------------------------
+        const prevApproved = getLatestApprovedPpmpForOffice(office, fiscalYear);
+        let versionItems = [];
+        let carriedCount = 0;
+
+        if (prevApproved) {
+            versionItems = clonePpmpItemsForCarryOver(prevApproved, stamp);
+            carriedCount = versionItems.length;
+        }
+
+        // Add the new line item created in this submission
+        versionItems.push(itemPayload);
+
+        // Brand-new PPMP (Version 1 or subsequent Version N)
         entry = {
-            id: Date.now(),
-
+            id: stamp,
             creatorId: session ? session.id : null,
-
-            ppmp_no:
-                document.getElementById('ppmp_no').value || 'N/A',
-
-            is_indicative:
-                document.getElementById('is_indicative').value,
-
-            end_user:
-                document.getElementById('end_user').value || 'N/A',
-
-            fiscal_year:
-                document.getElementById('fiscal_year').value,
-
-            items: [itemPayload],
-
-            status: 'Draft',                // becomes 'For Approval' on submit
-            currentApproverRole: null,      // set to the first stage on submit
+            ppmp_no: ppmpNo,
+            is_indicative: document.getElementById('is_indicative').value,
+            end_user: office,
+            fiscal_year: fiscalYear,
+            items: versionItems,
+            status: 'Draft',
+            currentApproverRole: null,
             remarksHistory: [],
             date: new Date().toLocaleDateString()
         };
@@ -1021,10 +1088,12 @@ function saveProcurementRequest() {
         }
 
         showToast(
-            isNewItem
-                ? `New item added under PPMP No. ${entry.ppmp_no}.`
-                : (existingRecord
-                    ? `Request "PPMP No. ${entry.ppmp_no}" was updated successfully.`
+            existingRecord
+                ? (isNewItem
+                    ? `New item added under PPMP No. ${entry.ppmp_no}.`
+                    : `Request "PPMP No. ${entry.ppmp_no}" was updated successfully.`)
+                : (typeof carriedCount !== 'undefined' && carriedCount > 0 && prevApproved
+                    ? `PPMP No. ${entry.ppmp_no} (Version ${entry.ppmp_no}) created with ${entry.items.length} items (${carriedCount} carried over from PPMP No. ${prevApproved.ppmp_no}).`
                     : `Request "PPMP No. ${entry.ppmp_no}" was saved successfully.`)
         );
 
