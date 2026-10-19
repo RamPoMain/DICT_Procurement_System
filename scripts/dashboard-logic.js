@@ -3592,7 +3592,10 @@ function executeItemDeletion(recordId, itemId) {
     if (wholeRecordRemoved) {
         records.splice(idx, 1);
     } else {
-        records[idx] = Object.assign({}, records[idx], { items: remainingItems });
+        records[idx] = Object.assign({}, records[idx], { items: remainingItems },
+            typeof resolveIndicative === 'function'
+                ? resolveIndicative(remainingItems, records[idx].is_indicative, (records[idx].indicative_mode || 'manual') === 'manual')
+                : {});
     }
 
     localStorage.setItem('procurement_records', JSON.stringify(records));
