@@ -41,6 +41,109 @@ const APPROVAL_CHAIN = [
     { role: 'RD',   label: 'Regional Director' }
 ];
 
+// ============================================================
+// INDICATIVE / FINAL — suggested from Source of Funds
+// Any item funded "Before GAA" makes the PPMP Indicative; otherwise Final.
+// Stays editable: choosing by hand switches to 'manual' and auto stops.
+// ============================================================
+const BEFORE_GAA_PATTERN = /\b(?:before|pre|prior(?:\s+to)?)[\s-]*(?:the\s+)?(?:gaa|general\s+appropriations?(?:\s+act)?)\b/i;
+let indicativeManual = false;
+
+function suggestIndicativeFromItems(items) {
+    const sources = (items || [])
+        .map(function (it) { return String((it && it.fund_source) || '').trim(); })
+        .filter(Boolean);
+    if (!sources.length) return null;   // nothing to decide from yet
+    return sources.some(function (s) { return BEFORE_GAA_PATTERN.test(s); }) ? 'Indicative' : 'Final';
+}
+
+// What to store on a record. A manual choice is never overwritten.
+function resolveIndicative(items, currentValue, manual) {
+    if (manual) return { is_indicative: currentValue, indicative_mode: 'manual' };
+    return { is_indicative: suggestIndicativeFromItems(items) || currentValue, indicative_mode: 'auto' };
+}
+
+// Other items already saved under this PPMP + the fund source currently typed.
+function getItemsForIndicative() {
+    const items = [];
+    if (currentEditingId && typeof getRecordItems === 'function') {
+        const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
+        const rec = records.find(function (r) { return r.id == currentEditingId; });
+        if (rec) getRecordItems(rec).forEach(function (it) {
+            if (it.id != currentEditingItemId) items.push(it);
+        });
+    }
+    const fund = document.getElementById('fund_source');
+    items.push({ fund_source: fund ? fund.value : '' });
+    return items;
+}
+
+function renderIndicativeHint() {
+    const sel = document.getElementById('is_indicative');
+    if (!sel) return;
+    let hint = document.getElementById('indicativeHint');
+    if (!hint) {
+        hint = document.createElement('p');
+        hint.id = 'indicativeHint';
+        hint.className = 'mode-hint';
+        sel.closest('.field-group').appendChild(hint);
+    }
+    const suggestion = suggestIndicativeFromItems(getItemsForIndicative());
+    hint.textContent = '';
+    if (!indicativeManual) {
+        hint.textContent = suggestion
+            ? 'Set automatically from Source of Funds (' + (suggestion === 'Indicative' ? 'Before GAA' : 'GAA-funded') + '). You can still change it.'
+            : 'Set automatically from Source of Funds in Step 3: Before GAA → Indicative, otherwise Final. You can still change it.';
+        return;
+    }
+    hint.textContent = 'Set manually' +
+        (suggestion && suggestion !== sel.value ? ' (Source of Funds suggests ' + suggestion + ')' : '') + '. ';
+    if (!sel.disabled && !isViewMode) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = 'Reset to automatic';
+        btn.style.cssText = 'background:none;border:none;padding:0;font:inherit;color:var(--db-accent,#3B82F6);text-decoration:underline;cursor:pointer;';
+        btn.addEventListener('click', function () { indicativeManual = false; syncIndicative(); });
+        hint.appendChild(btn);
+    }
+}
+
+function syncIndicative() {
+    const sel = document.getElementById('is_indicative');
+    if (!sel || isViewMode) return;
+    if (!indicativeManual) {
+        const suggestion = suggestIndicativeFromItems(getItemsForIndicative());
+        if (suggestion) sel.value = suggestion;   // programmatic: fires no 'change', so it stays automatic
+    }
+    renderIndicativeHint();
+}
+
+function initIndicativeAuto() {
+    const fund = document.getElementById('fund_source');
+    const sel = document.getElementById('is_indicative');
+    if (!fund || !sel) return;
+
+    // Suggestions only; free text is still allowed, so the data shape doesn't change.
+    if (!document.getElementById('fundSourceOptions')) {
+        const dl = document.createElement('datalist');
+        dl.id = 'fundSourceOptions';
+        ['Before GAA', 'GAA'].forEach(function (v) {
+            const o = document.createElement('option'); o.value = v; dl.appendChild(o);
+        });
+        fund.parentNode.appendChild(dl);
+        fund.setAttribute('list', 'fundSourceOptions');
+    }
+
+    fund.addEventListener('input', syncIndicative);
+    fund.addEventListener('change', function () {   // fires on blur, so one toast, not one per keystroke
+        if (!indicativeManual && !isViewMode && sel.value && typeof showToast === 'function') {
+            showToast('Marked ' + sel.value + ' from Source of Funds. You can change it in Step 1.');
+        }
+    });
+    sel.addEventListener('change', function () { indicativeManual = true; renderIndicativeHint(); });
+    renderIndicativeHint();
+}
+
 function getApprovalStep(stage) {
     return APPROVAL_CHAIN.find(step => step.role === stage) || null;
 }
@@ -1056,6 +1159,8 @@ function saveProcurementRequest() {
             date: new Date().toLocaleDateString()
         };
     }
+    
+    Object.assign(entry, resolveIndicative(entry.items, entry.is_indicative, indicativeManual));
 
 
     if (existingRecord) {
@@ -2907,6 +3012,11 @@ function resetRequestForm() {
 
             field.value = '';
         });
+           
+   indicativeManual = false;
+   const indSel = document.getElementById('is_indicative');
+   if (indSel) indSel.value = 'Indicative';   // automatic default; Step 3 can flip it to Final
+   renderIndicativeHint();
 
 
     // Reset strategies + uploads
@@ -3103,11 +3213,12 @@ function addEntryToPpmp(ppmpNo, fiscalYear) {
         endUserField.readOnly = true;
     }
 
-    const indicativeField = document.getElementById('is_indicative');
-    if (indicativeField) {
-        indicativeField.value = (groupRecord && groupRecord.is_indicative) || 'Indicative';
-        indicativeField.disabled = true; // locked to parent PPMP's choice
-    }
+       const indicativeField = document.getElementById('is_indicative');
+   if (indicativeField) {
+       indicativeField.value = (groupRecord && groupRecord.is_indicative) || 'Indicative';
+       indicativeManual = !!groupRecord && (groupRecord.indicative_mode || 'manual') === 'manual';
+       renderIndicativeHint();   // no longer locked, so a new Before-GAA item can flip the PPMP
+   }
 
     // 6. Ensure Finish button saves the new entry
     const finishBtn = document.getElementById('finishBtn');
@@ -3225,7 +3336,10 @@ function loadRecordIntoModal(id, itemIndex = 0) {
         const el = document.getElementById(key);
         if (el) el.value = fieldMap[key] || '';
     });
-
+    
+    indicativeManual = (data.indicative_mode || 'manual') === 'manual';
+    renderIndicativeHint();
+    
     updateDocTypeHint();
 
     // Load Strategies
@@ -3719,6 +3833,8 @@ function enableEditMode() {
     isViewMode = false;
     enableModalFields();
     hideItemNavigator();
+    renderIndicativeHint();
+
 
     const editBtn = document.getElementById('editRequestBtn');
     if (editBtn) editBtn.classList.add('hidden');
@@ -3963,7 +4079,7 @@ document.addEventListener('DOMContentLoaded', function () {
         initializeModeValidation();
         initRequiredFieldValidation();
         initFileUpload();
-
+        initIndicativeAuto();
         restrictNumberOnly('ppmp_no');
         restrictNumberOnly('fiscal_year');
         restrictDecimalNumber('budget');

@@ -849,7 +849,8 @@
 
         if (existing) {
             var merged = (typeof getRecordItems === 'function' ? getRecordItems(existing) : []).slice().concat(stamped);
-            var updated = Object.assign({}, existing, { items: merged });
+            var updated = Object.assign({}, existing, { items: merged },
+            resolveIndicative(merged, existing.is_indicative, (existing.indicative_mode || 'manual') === 'manual'));
             db[db.findIndex(function (r) { return r.id == currentEditingId; })] = updated;
             ppmpNo = updated.ppmp_no;
             
@@ -865,7 +866,7 @@
             var initialItems = prevApproved ? clonePpmpItemsForCarryOver(prevApproved, stamp) : [];
             var finalItems = initialItems.concat(stamped);
 
-            db.push({
+                        var rec = {
                 id: stamp,
                 creatorId: session ? session.id : null,
                 ppmp_no: ppmpNo,
@@ -877,7 +878,10 @@
                 currentApproverRole: null,
                 remarksHistory: [],
                 date: new Date().toLocaleDateString()
-            });
+            };
+            Object.assign(rec, resolveIndicative(finalItems, header.is_indicative,
+                typeof indicativeManual !== 'undefined' && indicativeManual));
+            db.push(rec);
         }
 
         try {
@@ -1053,6 +1057,7 @@
             typeSelect.addEventListener('change', function () {
                 // Keeps the form's own field in step, so the saved PPMP uses it.
                 indicativeEl.value = typeSelect.value;
+                indicativeEl.dispatchEvent(new Event('change'));
             });
         }
 

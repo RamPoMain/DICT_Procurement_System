@@ -2747,6 +2747,10 @@ function savePreviewChanges(recordId) {
     }
 
     all[idx].items = JSON.parse(JSON.stringify(draft.items));
+    if (typeof resolveIndicative === 'function') {
+    Object.assign(all[idx], resolveIndicative(all[idx].items, all[idx].is_indicative,
+        (all[idx].indicative_mode || 'manual') === 'manual'));
+}
 
     try {
         localStorage.setItem('procurement_records', JSON.stringify(all));
