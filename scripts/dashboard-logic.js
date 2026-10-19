@@ -1294,6 +1294,13 @@ function closeExcelPreview() {
 // Chain: Supply Account (Submit) -> ARD (Approve) -> RD (Approve) -> Final APP
 // ============================================================
 
+
+// Checks if the signed-in account is part of the APP preparation & approval chain
+function isAppAuthorizedUser(session) {
+    const s = session || (typeof getSession === 'function' ? getSession() : null);
+    return !!(s && ['SUP', 'ARD', 'RD'].includes(s.role));
+}
+
 const APP_RECORDS_KEY = 'app_records';
 
 function getAllAppRecords() {
@@ -1763,20 +1770,24 @@ function performAppReviewAction(fiscalYear, action) {
 async function runPreviewApp(targetYear = null) {
     if (appGenerating) return;
 
+    const session = typeof getSession === 'function' ? getSession() : null;
+    if (!isAppAuthorizedUser(session)) {
+        showToast('Access denied: You do not have permission to view the Annual Procurement Plan.');
+        return;
+    }
+
     if (typeof previewAPP_PDF !== 'function') {
         showToast('The PDF generator is not available on this page.');
         return;
     }
 
     const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
-    // If no year specified, use the active year
     const yearToPreview = targetYear 
         ? String(targetYear).trim() 
         : (typeof getDefaultAppFiscalYear === 'function' ? String(getDefaultAppFiscalYear(records)).trim() : null);
 
     appGenerating = true;
     try {
-        // Forward yearToPreview to previewAPP_PDF!
         const result = await previewAPP_PDF(yearToPreview);
         if (result) openAppPreviewModal(result);
     } catch (err) {
@@ -1805,6 +1816,30 @@ function getLatestApprovedPpmpPerOffice(records, fiscalYear) {
     });
 
     return Array.from(latestByOffice.values());
+}
+
+async function runGenerateApp(targetYear = null) {
+    const session = typeof getSession === 'function' ? getSession() : null;
+    if (!isAppAuthorizedUser(session)) {
+        showToast('Access denied: You do not have permission to generate the Annual Procurement Plan.');
+        return;
+    }
+
+    const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const year = targetYear 
+        ? String(targetYear).trim() 
+        : (typeof getDefaultAppFiscalYear === 'function' ? String(getDefaultAppFiscalYear(records)).trim() : String(new Date().getFullYear()));
+    
+    const appRec = getAppRecord(year);
+
+    if (appRec.status !== 'Completed') {
+        runPreviewApp(year);
+        return;
+    }
+
+    if (typeof generateAPP_PDF === 'function') {
+        generateAPP_PDF(year);
+    }
 }
 
 // Shows the APP button for SUP, ARD, and RD
@@ -3180,10 +3215,20 @@ function renderDashboardAppSection() {
     const list = document.getElementById('db-activity-list');
     if (!list) return; // Only runs on index.html (Dashboard)
 
+    const session = typeof getSession === 'function' ? getSession() : null;
     let appDashCard = document.getElementById('dbAppDashboardCard');
+
+    // SECURITY CHECK: If user is NOT SUP, ARD, or RD, hide the section and exit
+    if (!isAppAuthorizedUser(session)) {
+        if (appDashCard) appDashCard.style.display = 'none';
+        return;
+    }
+
+    // Ensure it is visible if previously hidden
+    if (appDashCard) appDashCard.style.display = 'block';
+
     const allRecords = JSON.parse(localStorage.getItem('procurement_records')) || [];
     const apps = typeof getSupplierAppList === 'function' ? getSupplierAppList(allRecords) : [];
-    const session = typeof getSession === 'function' ? getSession() : null;
 
     if (!appDashCard) {
         appDashCard = document.createElement('div');
@@ -3191,7 +3236,6 @@ function renderDashboardAppSection() {
         appDashCard.className = 'db-activity-card';
         appDashCard.style.cssText = 'margin-bottom: 22px; padding: 22px 24px; background: var(--db-card); border: 1px solid var(--db-border); border-radius: var(--db-radius); box-shadow: var(--db-shadow);';
 
-        // Position it right above Recent Activity
         const anchor = list.closest('.db-activity-card, .db-card, .db-recent-activity, section');
         if (anchor && anchor.parentNode) {
             anchor.parentNode.insertBefore(appDashCard, anchor);
