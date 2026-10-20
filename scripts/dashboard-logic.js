@@ -1047,6 +1047,11 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true) {
     const isIndicative = record.is_indicative === 'Indicative';
     const isFinal = record.is_indicative === 'Final';
     const items = editable ? ensurePreviewDraft(record).items : getRecordItems(record);
+    // Criteria for Bid Evaluation (col 6) and Procurement Strategies (col 12)
+    // are only shown while the PPMP is still a Draft. Once it is submitted for
+    // approval they are hidden here and only appear in the APP. The cells stay
+    // in the markup (class ep-cs-col) so the column-position CSS keeps working.
+    const showCS = isPpmpDraft(record);
     const formattedTotal = formatPesoExact(
         items.reduce((sum, item) => sum + parseBudgetNumber(item.budget), 0)
     );
@@ -1061,19 +1066,19 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true) {
             : renderPreviewDocs(item, record.id);
 
         return `
-            <tr class="ep-item-row" ${itemFilterAttrs(item)}>
+            <tr class="ep-item-row" ${itemFilterAttrs(item, showCS)}>
                 <td>${escapeHtml(item.project_description || '')}</td>
                 <td>${escapeHtml(item.project_type || '')}</td>
                 <td>${escapeHtml(item.quantity_size || '')}</td>
                 <td>${escapeHtml(item.mode || '')}</td>
                 <td>${escapeHtml(item.pre_procurement || '')}</td>
-                <td>${escapeHtml(item.bid_evaluation_criteria || 'N/A')}</td>
+                <td class="ep-cs-col">${showCS ? escapeHtml(item.bid_evaluation_criteria || 'N/A') : ''}</td>
                 <td>${escapeHtml(item.start_date || '')}</td>
                 <td>${escapeHtml(item.end_date || '')}</td>
                 <td>${escapeHtml(item.delivery_period || '')}</td>
                 <td>${escapeHtml(item.fund_source || '')}</td>
                 <td>${escapeHtml(formatPesoExact(parseBudgetNumber(item.budget)))}</td>
-                <td>${itemStrategies}</td>
+                <td class="ep-cs-col">${showCS ? itemStrategies : ''}</td>
                 <td>${attachedDocs}</td>
                 <td>${escapeHtml(item.general_requirements || '')}</td>
                 <td>${escapeHtml(item.remarks || '')}</td>
@@ -1100,13 +1105,13 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true) {
             </div>
 
             <div class="excel-preview-table-wrap">
-                <table class="excel-preview-table">
+                <table class="excel-preview-table${showCS ? '' : ' ep-hide-cs'}">
                     <thead>
                         <tr>
-                            <th colspan="6">PROCUREMENT PROJECT DETAILS</th>
+                            <th colspan="${showCS ? 6 : 5}">PROCUREMENT PROJECT DETAILS</th>
                             <th colspan="3">PROJECTED TIMELINE (MM/YYYY)</th>
                             <th colspan="2">FUNDING DETAILS</th>
-                            <th rowspan="2">PROCUREMENT STRATEGIES AND TOOLS</th>
+                            <th rowspan="2" class="ep-cs-col">PROCUREMENT STRATEGIES AND TOOLS</th>
                             <th rowspan="2">ATTACHED SUPPORTING DOCUMENTS</th>
                             <th rowspan="2">GENERAL REQUIREMENTS/MISCELLANEOUS/COMMON SUPPLIES AND EQUIPMENT</th>
                             <th rowspan="2">REMARKS</th>
@@ -1118,7 +1123,7 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true) {
                             <th>Quantity and Size of the Project to be Procured</th>
                             <th>Recommended Mode of Procurement</th>
                             <th>Pre-Procurement Conference (Yes/No)</th>
-                            <th>Criteria for Bid Evaluation</th>
+                            <th class="ep-cs-col">Criteria for Bid Evaluation</th>
                             <th>Start of Procurement Activity</th>
                             <th>End of Procurement Activity</th>
                             <th>Expected Delivery/ Implementation Period</th>
@@ -1126,40 +1131,35 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true) {
                             <th>Estimated Budget / Authorized Budgetary Allocation (PhP)</th>
                         </tr>
                         <tr>
-                            <th>Column 1</th>
-                            <th>Column 2</th>
-                            <th>Column 3</th>
-                            <th>Column 4</th>
-                            <th>Column 5</th>
-                            <th>Column 6</th>
-                            <th>Column 7</th>
-                            <th>Column 8</th>
-                            <th>Column 9</th>
-                            <th>Column 10</th>
-                            <th>Column 11</th>
-                            <th>Column 12</th>
-                            <th>Column 13</th>
-                            <th>Column 14</th>
-                            <th>Column 15</th>
+                            ${(() => {
+                                // Number only the visible columns so hiding two leaves no gap.
+                                let shown = 0;
+                                return Array.from({ length: 15 }, (_, i) => {
+                                    const isCS = (i + 1 === 6 || i + 1 === 12);
+                                    if (isCS && !showCS) return '<th class="ep-cs-col"></th>';
+                                    shown += 1;
+                                    return '<th>Column ' + shown + '</th>';
+                                }).join('');
+                            })()}
                             ${editable ? '<th></th>' : ''}
                         </tr>
                     </thead>
                     <tbody>
                         ${itemRows}
-                        ${editable ? '' : '<tr class="ep-filter-empty hidden"><td colspan="15">No items match the current filters.</td></tr>'}
+                        ${editable ? '' : `<tr class="ep-filter-empty hidden"><td colspan="${showCS ? 15 : 13}">No items match the current filters.</td></tr>`}
                         <tr>
-                            <td colspan="10" class="excel-total-label">TOTAL BUDGET:</td>
+                            <td colspan="${showCS ? 10 : 9}" class="excel-total-label">TOTAL BUDGET:</td>
                             <td class="excel-total-value">${escapeHtml(formattedTotal)}</td>
-                            <td></td>
+                            <td class="ep-cs-col"></td>
                             <td></td>
                             <td></td>
                             <td></td>
                             ${editable ? '<td></td>' : ''}
                         </tr>
                         ${editable ? '' : `<tr class="ep-filter-subtotal hidden">
-                            <td colspan="10" class="excel-total-label ep-filter-subtotal-label"></td>
+                            <td colspan="${showCS ? 10 : 9}" class="excel-total-label ep-filter-subtotal-label"></td>
                             <td class="excel-total-value ep-filter-subtotal-value"></td>
-                            <td></td>
+                            <td class="ep-cs-col"></td>
                             <td></td>
                             <td></td>
                             <td></td>
@@ -2782,10 +2782,6 @@ function savePreviewChanges(recordId) {
     }
 
     all[idx].items = JSON.parse(JSON.stringify(draft.items));
-    if (typeof resolveIndicative === 'function') {
-    Object.assign(all[idx], resolveIndicative(all[idx].items, all[idx].is_indicative,
-        (all[idx].indicative_mode || 'manual') === 'manual'));
-}
 
     try {
         localStorage.setItem('procurement_records', JSON.stringify(all));
@@ -2829,16 +2825,16 @@ function isEntryItemFilterActive() {
 
 // data-* attributes for one item row: everything the filter needs to
 // decide whether the row matches, without touching the DOM cells.
-function itemFilterAttrs(item) {
+function itemFilterAttrs(item, includeCriteriaStrategies = true) {
     const docNames = Array.isArray(item.supporting_documents)
         ? item.supporting_documents.map(function (d) { return d.name || ''; })
         : [];
     const haystack = [
         item.project_description, item.project_type, item.quantity_size, item.mode,
-        item.pre_procurement, item.bid_evaluation_criteria, item.fund_source,
+        item.pre_procurement, includeCriteriaStrategies ? item.bid_evaluation_criteria : '', item.fund_source,
         item.remarks, item.general_requirements, item.start_date, item.end_date, item.delivery_period,
         formatPesoExact(parseBudgetNumber(item.budget)),
-        Array.isArray(item.strategies) ? item.strategies.join(' ') : item.strategies,
+        includeCriteriaStrategies ? (Array.isArray(item.strategies) ? item.strategies.join(' ') : item.strategies) : '',
         docNames.join(' ')
     ].map(function (v) { return String(v == null ? '' : v); }).join(' ').toLowerCase();
 
@@ -3066,7 +3062,6 @@ function renderEntries(records) {
                 <td class="db-entry-description">${escapeHtml(description)}</td>
                 <td>${escapeHtml(record.end_user || 'N/A')}</td>
                 <td>${escapeHtml(getRecordProjectTypeSummary(record))}</td>
-                <td>${escapeHtml(getRecordCriteriaSummary(record))}</td>
                 <td>${escapeHtml(budget)}</td>
                 <td>${renderStatusPill(record, submittedTitle)}</td>
                 <td>${ppmpType === 'N/A' ? 'N/A' : `<span class="db-status-pill ${ppmpType === 'Final' ? 'is-type-final' : 'is-type-indicative'}">${ppmpType}</span>`}</td>
@@ -3074,7 +3069,7 @@ function renderEntries(records) {
             </tr>
             ${isExpanded ? `
             <tr class="db-entry-expand-row">
-                <td colspan="10">
+                <td colspan="9">
                     <div class="db-entry-expand-inner">
                         ${buildPreviewToolbarHtml(Number(record.id), { record: record, canEdit: isEditable })}
                         ${isEditing ? '' : buildItemFilterBarHtml(record)}
@@ -3636,10 +3631,7 @@ function executeItemDeletion(recordId, itemId) {
     if (wholeRecordRemoved) {
         records.splice(idx, 1);
     } else {
-        records[idx] = Object.assign({}, records[idx], { items: remainingItems },
-            typeof resolveIndicative === 'function'
-                ? resolveIndicative(remainingItems, records[idx].is_indicative, (records[idx].indicative_mode || 'manual') === 'manual')
-                : {});
+        records[idx] = Object.assign({}, records[idx], { items: remainingItems });
     }
 
     localStorage.setItem('procurement_records', JSON.stringify(records));

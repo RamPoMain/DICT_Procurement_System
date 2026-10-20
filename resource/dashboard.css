@@ -1396,6 +1396,13 @@ html[data-theme="light"] .approval-info strong { color: #15803D; }
     }
 }
 
+/* Criteria for Bid Evaluation and Procurement Strategies are hidden once a
+   PPMP is submitted for approval (they only show again in the APP). The cells
+   stay in the DOM so the nth-child width/alignment rules below keep matching. */
+.excel-preview-table.ep-hide-cs .ep-cs-col {
+    display: none;
+}
+
 /* Numbers and dates line up */
 .db-entry-expand-inner .excel-preview-table tbody tr:not(.ep-add-row) > td:nth-child(5) {
     text-align: center;
