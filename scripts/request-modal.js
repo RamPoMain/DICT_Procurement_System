@@ -986,6 +986,14 @@ function saveProcurementRequest() {
             uploadedFiles.map(buildSavedDocFromEntry)
     };
 
+    // Reference number: an existing entry keeps the one it has; a brand-new
+    // entry is given the next free number.
+    const existingItemForRef = (existingRecord && currentEditingItemId && typeof getRecordItems === 'function')
+        ? getRecordItems(existingRecord).find(it => it.id == currentEditingItemId)
+        : null;
+    itemPayload.reference_no = (existingItemForRef && existingItemForRef.reference_no) ||
+        (typeof claimEntryRef === 'function' ? claimEntryRef(db) : '');
+
     let entry;
     let isNewItem = false;
 
@@ -1089,11 +1097,11 @@ function saveProcurementRequest() {
         showToast(
             existingRecord
                 ? (isNewItem
-                    ? `New item added under PPMP No. ${entry.ppmp_no}.`
+                    ? `New item added under PPMP No. ${entry.ppmp_no}. Entry ref: ${itemPayload.reference_no}.`
                     : `Request "PPMP No. ${entry.ppmp_no}" was updated successfully.`)
                 : (typeof carriedCount !== 'undefined' && carriedCount > 0 && prevApproved
-                    ? `PPMP No. ${entry.ppmp_no} (Version ${entry.ppmp_no}) created with ${entry.items.length} items (${carriedCount} carried over from PPMP No. ${prevApproved.ppmp_no}).`
-                    : `Request "PPMP No. ${entry.ppmp_no}" was saved successfully.`)
+                    ? `PPMP No. ${entry.ppmp_no} (Version ${entry.ppmp_no}) created with ${entry.items.length} items (${carriedCount} carried over from PPMP No. ${prevApproved.ppmp_no}). New entry ref: ${itemPayload.reference_no}.`
+                    : `Request "PPMP No. ${entry.ppmp_no}" was saved successfully. Entry ref: ${itemPayload.reference_no}.`)
         );
 
     } catch (err) {
@@ -2894,6 +2902,7 @@ function resetRequestForm() {
     currentEditingItemId = null;
     currentItemIndex = 0;
     hideItemNavigator();
+    hideEntryRef();
 
     // Clear every text/select/textarea value in the modal
     document
@@ -3019,6 +3028,7 @@ function openRequestModal(id = null) {
         isViewMode = false;
 
         try { enableModalFields(); } catch (e) { console.warn(e); }
+        showEntryRef(peekEntryRefForNewEntry(), true);
         try { initializePpmpNumber(); } catch (e) { console.warn(e); }
         try {
             const rolledYear = initializeFiscalYear();
@@ -3124,6 +3134,8 @@ function addEntryToPpmp(ppmpNo, fiscalYear) {
         titleEl.innerText = 'NEW ITEM — PPMP NO. ' + ppmpNo;
     }
 
+    showEntryRef(peekEntryRefForNewEntry(), true);
+
     if (typeof showToast === 'function') {
         showToast('Adding a new line item under PPMP No. ' + ppmpNo + '.');
     }
@@ -3135,6 +3147,72 @@ function addEntryToPpmp(ppmpNo, fiscalYear) {
 // Shown above the form whenever the PPMP being viewed has more than one
 // line item, so the user can step between them without leaving the modal.
 // ============================================================
+
+// ============================================================
+// ENTRY REFERENCE NUMBER (shown only in this form)
+// A small read-only bar under the progress track. The number is made by
+// claimEntryRef() in dashboard-logic.js when the entry is first saved; for a
+// not-yet-saved entry the bar shows the number it is expected to get.
+// It is a plain element (not an input) so resetRequestForm() leaves it alone.
+// ============================================================
+function ensureEntryRefBar() {
+    let bar = document.getElementById('entryRefBar');
+    if (bar) return bar;
+
+    const progress = document.querySelector('#requestModalOverlay .progress-section');
+    if (!progress) return null;
+
+    bar = document.createElement('div');
+    bar.id = 'entryRefBar';
+    bar.className = 'entry-ref-bar hidden';
+    bar.innerHTML =
+        '<span class="entry-ref-label">Entry Reference No.</span>' +
+        '<strong id="entryRefValue" class="entry-ref-value"></strong>' +
+        '<span id="entryRefNote" class="entry-ref-note"></span>' +
+        '<button type="button" id="entryRefCopyBtn" class="entry-ref-copy" aria-label="Copy reference number">Copy</button>';
+    progress.insertAdjacentElement('afterend', bar);
+
+    bar.querySelector('#entryRefCopyBtn').addEventListener('click', function () {
+        const value = bar.querySelector('#entryRefValue').textContent;
+        if (!value) return;
+        const done = function () {
+            if (typeof showToast === 'function') showToast('Reference number ' + value + ' copied.');
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(value).then(done).catch(function () {});
+        } else {
+            const ta = document.createElement('textarea');
+            ta.value = value;
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); done(); } catch (e) { /* ignore */ }
+            document.body.removeChild(ta);
+        }
+    });
+    return bar;
+}
+
+function showEntryRef(ref, isPending) {
+    const bar = ensureEntryRefBar();
+    if (!bar) return;
+    bar.querySelector('#entryRefValue').textContent = ref || '';
+    bar.querySelector('#entryRefNote').textContent = isPending ? '(assigned when you save)' : '';
+    bar.classList.toggle('hidden', !ref);
+}
+
+function hideEntryRef() {
+    const bar = document.getElementById('entryRefBar');
+    if (bar) bar.classList.add('hidden');
+}
+
+function peekEntryRefForNewEntry() {
+    try {
+        const db = JSON.parse(localStorage.getItem('procurement_records')) || [];
+        return typeof peekNextEntryRef === 'function' ? peekNextEntryRef(db) : '';
+    } catch (e) {
+        return '';
+    }
+}
 
 function hideItemNavigator() {
     const nav = document.getElementById('modalItemNav');
@@ -3282,6 +3360,7 @@ function loadRecordIntoModal(id, itemIndex = 0) {
     applyApprovalState(data);
 
     renderItemNavigator(data.id, items, safeIndex);
+    showEntryRef(item.reference_no || '', false);
 }
 
 // Reflects a record's status as a colored pill next to the modal title.
@@ -3800,6 +3879,7 @@ function closeRequestModal() {
     currentEditingId = null;
     currentEditingItemId = null;
     hideItemNavigator();
+    hideEntryRef();
 }
 
 

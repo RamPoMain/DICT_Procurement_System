@@ -687,3 +687,61 @@
     opacity: 0.35;
     cursor: default;
 }
+
+/* ---------------- Entry reference number (Add / View Entry form only) ---------------- */
+
+.entry-ref-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: fit-content;
+    max-width: calc(100% - 40px);
+    margin: 0 auto 14px;
+    padding: 8px 14px;
+    border: 1px dashed var(--db-field-border, #C7CCDA);
+    border-radius: 10px;
+    background: var(--db-accent-soft, rgba(59, 130, 246, 0.14));
+    color: var(--db-text, #121826);
+    font-size: 12.5px;
+}
+
+.entry-ref-label {
+    color: var(--db-text-dim, #5B6478);
+    font-weight: 600;
+}
+
+.entry-ref-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    user-select: all;
+}
+
+.entry-ref-note {
+    color: var(--db-text-dim, #5B6478);
+    font-size: 11.5px;
+}
+
+.entry-ref-copy {
+    padding: 3px 10px;
+    border: 1px solid var(--db-accent, #3B82F6);
+    border-radius: 7px;
+    background: transparent;
+    color: var(--db-accent, #3B82F6);
+    font-family: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.entry-ref-copy:hover {
+    background: var(--db-accent, #3B82F6);
+    color: #fff;
+}
+
+.entry-ref-copy:focus-visible {
+    outline: 2px solid var(--db-accent, #3B82F6);
+    outline-offset: 2px;
+}

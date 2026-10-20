@@ -254,8 +254,91 @@ function getRecordItems(record) {
         strategies: record.strategies || [],
         general_requirements: record.general_requirements || '',
         remarks: record.remarks,
-        supporting_documents: record.supporting_documents || []
+        supporting_documents: record.supporting_documents || [],
+        reference_no: record.reference_no || ''
     }];
+}
+
+// ------------------------------------------------------------
+// ENTRY REFERENCE NUMBERS
+// Every entry (line item) gets a permanent reference number, ENT-0001,
+// ENT-0002, ... so people can point at one entry ("see ENT-0012").
+// It is handed out when the entry is first saved and never changes after
+// that. It is only displayed in the Add / View Entry form (request-modal.js),
+// never in the tables, previews or exports.
+//
+// The counter lives in localStorage ('entry_ref_counter') and is never
+// lower than the highest number already on a record, so numbers are not
+// reused after an entry is deleted. Entries carried over into a new PPMP
+// version keep their number (they are the same entry).
+// ------------------------------------------------------------
+const ENTRY_REF_PREFIX = 'ENT-';
+const ENTRY_REF_COUNTER_KEY = 'entry_ref_counter';
+let entryRefLastIssued = 0;
+
+function formatEntryRef(n) {
+    return ENTRY_REF_PREFIX + String(n).padStart(4, '0');
+}
+
+function parseEntryRef(ref) {
+    const m = /^ENT-(\d+)$/.exec(String(ref || ''));
+    return m ? parseInt(m[1], 10) : 0;
+}
+
+function readEntryRefCounter(records) {
+    let highest = 0;
+    (records || []).forEach(function (record) {
+        highest = Math.max(highest, parseEntryRef(record && record.reference_no));
+        if (record && Array.isArray(record.items)) {
+            record.items.forEach(function (item) {
+                highest = Math.max(highest, parseEntryRef(item && item.reference_no));
+            });
+        }
+    });
+    let stored = 0;
+    try { stored = parseInt(localStorage.getItem(ENTRY_REF_COUNTER_KEY), 10) || 0; } catch (e) { /* ignore */ }
+    return Math.max(highest, stored, entryRefLastIssued);
+}
+
+// The number the next new entry will get (does not reserve it).
+function peekNextEntryRef(records) {
+    return formatEntryRef(readEntryRefCounter(records) + 1);
+}
+
+// Reserves and returns the next number.
+function claimEntryRef(records) {
+    const n = readEntryRefCounter(records) + 1;
+    entryRefLastIssued = n;
+    try { localStorage.setItem(ENTRY_REF_COUNTER_KEY, String(n)); } catch (e) { /* ignore */ }
+    return formatEntryRef(n);
+}
+
+// Gives a number to every entry saved before this feature existed (oldest
+// PPMP first). Does nothing once every entry has one.
+function backfillEntryReferences() {
+    let db;
+    try { db = JSON.parse(localStorage.getItem('procurement_records')); } catch (e) { return; }
+    if (!Array.isArray(db) || db.length === 0) return;
+
+    let changed = false;
+    db.slice().sort(function (a, b) { return Number(a.id) - Number(b.id); }).forEach(function (record) {
+        if (Array.isArray(record.items) && record.items.length > 0) {
+            record.items.forEach(function (item) {
+                if (item && !item.reference_no) {
+                    item.reference_no = claimEntryRef(db);
+                    changed = true;
+                }
+            });
+        } else if (!record.reference_no) {
+            record.reference_no = claimEntryRef(db);   // old single-item record
+            changed = true;
+        }
+    });
+
+    if (changed) {
+        try { localStorage.setItem('procurement_records', JSON.stringify(db)); }
+        catch (e) { console.warn('Could not save entry reference numbers', e); }
+    }
 }
 
 
@@ -2781,6 +2864,11 @@ function savePreviewChanges(recordId) {
         return;
     }
 
+    // Entries typed straight into the dropdown get their reference number now.
+    draft.items.forEach(function (item) {
+        if (!item.reference_no) item.reference_no = claimEntryRef(all);
+    });
+
     all[idx].items = JSON.parse(JSON.stringify(draft.items));
 
     try {
@@ -3693,6 +3781,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     initThemeToggle();
     initEntryFilters();
+    backfillEntryReferences();
     refreshDashboardRecords();
     renderAppExportButton();
 
