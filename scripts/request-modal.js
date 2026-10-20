@@ -394,6 +394,38 @@ function getLatestApprovedPpmpForOffice(office, fiscalYear) {
     return approved[0];
 }
 
+/**
+ * Counts how many approved (Completed) PPMP versions contain an item with
+ * the specified reference_no under 'Competitive Bidding'.
+ */
+function countCompetitiveBiddingOccurrences(refNo, fiscalYear, office) {
+    if (!refNo) return 0;
+
+    const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    let count = 0;
+
+    records.forEach(record => {
+        // Only count PPMPs that were finalized and approved
+        if (record.status !== 'Completed') return;
+
+        // Match within the same office and fiscal year
+        if (office && record.end_user !== office) return;
+        if (fiscalYear && normalizeFiscalYear(record.fiscal_year) !== normalizeFiscalYear(fiscalYear)) return;
+
+        const items = typeof getRecordItems === 'function' ? getRecordItems(record) : (record.items || []);
+        const hasCompetitiveBidding = items.some(it => 
+            it && it.reference_no === refNo &&
+            (it.mode === 'Competitive Bidding' || String(it.mode).toLowerCase().includes('competitive bidding'))
+        );
+
+        if (hasCompetitiveBidding) {
+            count++;
+        }
+    });
+
+    return count;
+}
+
 function clonePpmpItemsForCarryOver(sourceRecord, newBaseTimestamp) {
     if (!sourceRecord) return [];
     const items = typeof getRecordItems === 'function' ? getRecordItems(sourceRecord) : (sourceRecord.items || []);
@@ -401,8 +433,9 @@ function clonePpmpItemsForCarryOver(sourceRecord, newBaseTimestamp) {
     
     return items.map((item, idx) => {
         const cloned = JSON.parse(JSON.stringify(item));
-        // Assign a fresh unique ID so editing in the new version does not mutate the old version
+        // Assign a fresh unique ID so editing does not mutate the old version
         cloned.id = base + idx + 1;
+        // Keep the original item as-is (Entry 1 and 2 will stay 'Competitive Bidding')
         return cloned;
     });
 }
@@ -469,10 +502,16 @@ function refreshPpmpNumberForYear() {
     if (office && nextNo > 1) {
         const prev = getLatestApprovedPpmpForOffice(office, year);
         if (prev) {
-            const count = (typeof getRecordItems === 'function' ? getRecordItems(prev) : (prev.items || [])).length;
+            const carriedItems = clonePpmpItemsForCarryOver(prev, Date.now());
+            const autoNegotiatedCount = carriedItems.filter(i => i._autoNegotiated).length;
             const hint = document.getElementById('docTypeHint');
+            
             if (hint) {
-                hint.innerText = `Version ${nextNo}: ${count} approved item(s) from PPMP No. ${prev.ppmp_no} will carry over into this plan.`;
+                let msg = `Version ${nextNo}: ${carriedItems.length} approved item(s) from PPMP No. ${prev.ppmp_no} carried over.`;
+                if (autoNegotiatedCount > 0) {
+                    msg += ` Notice: ${autoNegotiatedCount} item(s) automatically switched to Negotiated Procurement after two failed biddings (RA 12009 Sec. 33).`;
+                }
+                hint.innerText = msg;
             }
         }
     }
@@ -801,6 +840,35 @@ function initializeStrategies() {
     });
 }
 
+function checkMatchingProjectLive() {
+    const descEl = document.getElementById('project_description');
+    const modeEl = document.getElementById('modeOfProcurement');
+    if (!descEl) return;
+
+    const desc = descEl.value.trim();
+    if (!desc) return;
+
+    const db = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const currentRec = currentEditingId ? db.find(r => r.id == currentEditingId) : null;
+    const refInfo = findExistingReferenceInfo(desc, null, currentRec);
+
+    if (refInfo) {
+        if (refInfo.competitiveCount >= 2) {
+            // Automatically switch mode to Negotiated Procurement
+            if (modeEl && modeEl.value !== 'Negotiated Procurement') {
+                modeEl.value = 'Negotiated Procurement';
+                if (typeof showToast === 'function') {
+                    showToast(`Matched ${refInfo.reference_no} (2 failed biddings). Mode set to Negotiated Procurement.`);
+                }
+            }
+            showFieldError('modeOfProcurement', `Matches ${refInfo.reference_no}: 2 failed biddings detected. Automatically set to Negotiated Procurement (RA 12009 Sec. 33).`);
+        } else {
+            // Inform the user it matched Attempt #1
+            showFieldError('project_description', `Linked to existing reference: ${refInfo.reference_no} (Attempt #${refInfo.competitiveCount + 1})`);
+        }
+    }
+}
+
 
 // ============================================================
 // SAVE PROCUREMENT REQUEST
@@ -822,6 +890,75 @@ function buildSavedDocFromEntry(entry) {
         doc.dataUrl = entry.dataUrl;
     }
     return doc;
+}
+
+/**
+ * Finds if there is an existing project entry with the same description and type
+ * under this office and fiscal year, and counts how many times it was set to Competitive Bidding.
+ */
+/**
+ * Finds an existing entry matching the project description.
+ * Reuses its reference_no and counts how many times it was under Competitive Bidding.
+ */
+function findExistingReferenceInfo(description, projectType, currentRecord) {
+    const desc = String(description || '').trim().toLowerCase();
+    if (!desc) return null;
+
+    const allRecords = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const session = typeof getSession === 'function' ? getSession() : null;
+
+    // Read office from the form field first, then current record, then session
+    const endUserField = document.getElementById('end_user');
+    const formOffice = endUserField ? endUserField.value.trim() : '';
+    const office = formOffice || (currentRecord && currentRecord.end_user) || (session ? session.office : null);
+    const normOffice = office ? office.trim().toLowerCase() : '';
+
+    let matchedRefNo = null;
+    let competitiveCount = 0;
+    let matchingItems = [];
+
+    function checkItem(it) {
+        if (!it) return;
+        const itDesc = String(it.project_description || '').trim().toLowerCase();
+
+        // Match if the project description is identical
+        if (itDesc === desc) {
+            if (it.reference_no && !matchedRefNo) {
+                matchedRefNo = it.reference_no;
+            }
+            matchingItems.push(it);
+
+            const isCompetitive = it.mode === 'Competitive Bidding' ||
+                String(it.mode || '').toLowerCase().includes('competitive bidding');
+            
+            if (isCompetitive) {
+                competitiveCount++;
+            }
+        }
+    }
+
+    // 1. Check items inside the current PPMP being edited (e.g. carried-over items)
+    if (currentRecord) {
+        const currentItems = typeof getRecordItems === 'function' ? getRecordItems(currentRecord) : (currentRecord.items || []);
+        currentItems.forEach(checkItem);
+    }
+
+    // 2. Check all saved PPMPs in localStorage (case-insensitive office match)
+    allRecords.forEach(r => {
+        if (currentRecord && r.id === currentRecord.id) return;
+        if (normOffice && r.end_user && r.end_user.trim().toLowerCase() !== normOffice) return;
+
+        const rItems = typeof getRecordItems === 'function' ? getRecordItems(r) : (r.items || []);
+        rItems.forEach(checkItem);
+    });
+
+    if (!matchedRefNo) return null;
+
+    return {
+        reference_no: matchedRefNo,
+        competitiveCount: competitiveCount,
+        totalEntries: matchingItems.length
+    };
 }
 
 function saveProcurementRequest() {
@@ -986,13 +1123,41 @@ function saveProcurementRequest() {
             uploadedFiles.map(buildSavedDocFromEntry)
     };
 
-    // Reference number: an existing entry keeps the one it has; a brand-new
-    // entry is given the next free number.
+    // --------------------------------------------------------------------
+    // REFERENCE NUMBER & TWO FAILED BIDDINGS LOGIC
+    // --------------------------------------------------------------------
     const existingItemForRef = (existingRecord && currentEditingItemId && typeof getRecordItems === 'function')
         ? getRecordItems(existingRecord).find(it => it.id == currentEditingItemId)
         : null;
-    itemPayload.reference_no = (existingItemForRef && existingItemForRef.reference_no) ||
-        (typeof claimEntryRef === 'function' ? claimEntryRef(db, itemPayload.project_type) : '');
+
+    if (existingItemForRef && existingItemForRef.reference_no) {
+        // Editing an existing line item: keep its own reference number and mode as-is
+        itemPayload.reference_no = existingItemForRef.reference_no;
+    } else {
+        // Adding a NEW entry: check if it matches an existing project
+        const refInfo = (typeof findExistingReferenceInfo === 'function')
+            ? findExistingReferenceInfo(itemPayload.project_description, itemPayload.project_type, existingRecord)
+            : null;
+
+        if (refInfo) {
+            // Re-use the exact same reference number (e.g. GDS-0001)
+            itemPayload.reference_no = refInfo.reference_no;
+
+            // ONLY this 3rd entry switches to Negotiated Procurement!
+            if (refInfo.competitiveCount >= 2) {
+                itemPayload.mode = 'Negotiated Procurement';
+                const autoNote = 'Negotiated Procurement after Two Failed Biddings (RA 12009 Sec. 33)';
+                if (!itemPayload.remarks || !itemPayload.remarks.includes('Two Failed Biddings')) {
+                    itemPayload.remarks = itemPayload.remarks ? `${itemPayload.remarks} [${autoNote}]` : autoNote;
+                }
+            }
+        } else {
+            // Brand-new project
+            itemPayload.reference_no = (typeof claimEntryRef === 'function')
+                ? claimEntryRef(db, itemPayload.project_type)
+                : '';
+        }
+    }
 
     let entry;
     let isNewItem = false;
@@ -1023,7 +1188,7 @@ function saveProcurementRequest() {
         end_user:      document.getElementById('end_user').value || existingRecord.end_user || 'N/A',
         fiscal_year:   document.getElementById('fiscal_year').value || existingRecord.fiscal_year,
         items:         items
-});
+    });
     } else {
         // Define the timestamp ID for the new PPMP
         const stamp = Date.now();
@@ -1110,6 +1275,29 @@ function saveProcurementRequest() {
             'supporting_docs',
             'This request could not be saved because the attached files are too large for browser storage. Please remove or shrink an attachment and try again.'
         );
+    }
+}
+
+function checkTwoFailedBiddingsLive() {
+    const descEl = document.getElementById('project_description');
+    const typeEl = document.getElementById('project_type');
+    const modeEl = document.getElementById('modeOfProcurement');
+    if (!descEl || !modeEl) return;
+
+    const desc = descEl.value.trim();
+    const type = typeEl ? typeEl.value.trim() : '';
+    if (!desc) return;
+
+    const db = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const currentRec = currentEditingId ? db.find(r => r.id == currentEditingId) : null;
+    const refInfo = findExistingReferenceInfo(desc, type, currentRec);
+
+    if (refInfo && refInfo.competitiveCount >= 2) {
+        if (modeEl.value !== 'Negotiated Procurement') {
+            modeEl.value = 'Negotiated Procurement';
+            showToast(`Project matches ${refInfo.reference_no} (2 failed biddings detected). Mode automatically switched to Negotiated Procurement.`);
+        }
+        showFieldError('modeOfProcurement', `Ref: ${refInfo.reference_no} — 2 prior failed biddings. Switched to Negotiated Procurement (RA 12009 Sec. 33).`);
     }
 }
 
@@ -2074,12 +2262,10 @@ function initRequiredFieldValidation() {
                     group
                 );
 
-
             // Only re-run the cross-check once the field's own
             // validation is satisfied, so a mismatch message doesn't
             // override a more fundamental "required"/format error.
-            if (
-                fieldValid &&
+            if (fieldValid &&
                 (
                     fieldName === 'modeOfProcurement' ||
                     fieldName === 'project_type' ||
@@ -2087,11 +2273,16 @@ function initRequiredFieldValidation() {
                     fieldName === 'budget'
                 )
             ) {
+                checkTwoFailedBiddingsLive();
                 validateModeTypeMatch();
                 validateModeBudgetMatch();
             }
             if (fieldValid && (fieldName === 'end_date' || fieldName === 'delivery_period')) {
             validateDeliveryDateMatch();
+            }
+
+            if (fieldName === 'project_description') {
+                checkMatchingProjectLive();
             }
         }
     );

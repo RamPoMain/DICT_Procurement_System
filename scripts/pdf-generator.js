@@ -130,8 +130,25 @@ async function generatePPMP_PDF() {
 
     // 4. PREPARE TABLE DATA
     // Clean each item's budget string (remove commas/spaces) so toLocaleString works
+    // 4. PREPARE TABLE DATA
     const parseBudget = (raw) => parseFloat(String(raw).replace(/[^0-9.]/g, '')) || 0;
-    const totalBudget = items.reduce((sum, item) => sum + parseBudget(item.budget), 0);
+
+    // Deduplicate so re-bids sharing the same reference number count once in Total Budget
+    const refBudgetMap = new Map();
+    let noRefTotal = 0;
+
+    items.forEach(item => {
+        const b = parseBudget(item.budget);
+        const ref = item.reference_no ? String(item.reference_no).trim() : null;
+        if (ref) {
+            refBudgetMap.set(ref, b);
+        } else {
+            noRefTotal += b;
+        }
+    });
+
+    let totalBudget = noRefTotal;
+    refBudgetMap.forEach(b => { totalBudget += b; });
     const formattedTotal = totalBudget.toLocaleString('en-PH', { minimumFractionDigits: 2 });
 
     const headers = [

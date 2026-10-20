@@ -308,33 +308,39 @@ function readEntryRefCounter(records, code) {
     let highest = 0;
     function look(ref) {
         const p = parseEntryRef(ref);
-        if (p && p.code === code) highest = Math.max(highest, p.n);
+        if (p && p.code === code && p.n > highest) {
+            highest = p.n;
+        }
     }
-    (records || []).forEach(function (record) {
+    
+    // Always scan active records in localStorage
+    const list = records || JSON.parse(localStorage.getItem('procurement_records')) || [];
+    list.forEach(function (record) {
         if (!record) return;
         look(record.reference_no);
         if (Array.isArray(record.items)) {
             record.items.forEach(function (item) { look(item && item.reference_no); });
         }
     });
-    let stored = 0;
-    try {
-        const all = JSON.parse(localStorage.getItem(ENTRY_REF_COUNTERS_KEY)) || {};
-        stored = parseInt(all[code], 10) || 0;
-    } catch (e) { /* ignore */ }
-    return Math.max(highest, stored, entryRefLastIssued[code] || 0);
+    
+    return highest;
 }
 
 // Reserves and returns the next number in the category of `projectType`.
 function claimEntryRef(records, projectType) {
+    const allRecords = records || JSON.parse(localStorage.getItem('procurement_records')) || [];
     const code = getEntryRefCategory(projectType);
-    const n = readEntryRefCounter(records, code) + 1;
-    entryRefLastIssued[code] = n;
+    
+    // Finds the true highest number currently existing in storage
+    const currentHighest = readEntryRefCounter(allRecords, code);
+    const n = currentHighest + 1;
+    
     try {
         const all = JSON.parse(localStorage.getItem(ENTRY_REF_COUNTERS_KEY)) || {};
         all[code] = n;
         localStorage.setItem(ENTRY_REF_COUNTERS_KEY, JSON.stringify(all));
     } catch (e) { /* ignore */ }
+    
     return formatEntryRef(code, n);
 }
 
@@ -403,12 +409,39 @@ function buildMissingDocsMessage(missing) {
         (more > 0 ? ' and ' + more + ' more' : '') + '. Open the PPMP and press Edit on each item.';
 }
 
+/**
+ * Calculates total budget across items, ensuring that multiple attempts 
+ * sharing the same reference_no are only counted ONCE.
+ */
+function calculateDeduplicatedBudget(items) {
+    if (!Array.isArray(items) || items.length === 0) return 0;
+
+    const refBudgetMap = new Map();
+    let noRefTotal = 0;
+
+    items.forEach(item => {
+        if (!item) return;
+        const b = parseBudgetNumber(item.budget);
+        const ref = item.reference_no ? String(item.reference_no).trim() : null;
+
+        if (ref) {
+            // Keep one instance of the budget for this reference number
+            refBudgetMap.set(ref, b);
+        } else {
+            noRefTotal += b;
+        }
+    });
+
+    let total = noRefTotal;
+    refBudgetMap.forEach(b => {
+        total += b;
+    });
+
+    return total;
+}
 
 function getRecordTotalBudget(record) {
-    return getRecordItems(record).reduce(
-        (sum, item) => sum + parseBudgetNumber(item.budget),
-        0
-    );
+    return calculateDeduplicatedBudget(getRecordItems(record));
 }
 
 
@@ -1168,7 +1201,7 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
     // in the markup (class ep-cs-col) so the column-position CSS keeps working.
     const showCS = isPpmpDraft(record);
     const formattedTotal = formatPesoExact(
-        items.reduce((sum, item) => sum + parseBudgetNumber(item.budget), 0)
+        calculateDeduplicatedBudget(items)
     );
 
     const itemRows = editable
@@ -2897,8 +2930,22 @@ function savePreviewChanges(recordId) {
     }
 
     // Entries typed straight into the dropdown get their reference number now.
+    // In savePreviewChanges(recordId) in dashboard-logic.js:
     draft.items.forEach(function (item) {
-        if (!item.reference_no) item.reference_no = claimEntryRef(all, item.project_type);
+        if (!item.reference_no) {
+            const refInfo = (typeof findExistingReferenceInfo === 'function')
+                ? findExistingReferenceInfo(item.project_description, item.project_type, all[idx])
+                : null;
+
+            if (refInfo) {
+                item.reference_no = refInfo.reference_no;
+                if (refInfo.competitiveCount >= 2) {
+                    item.mode = 'Negotiated Procurement';
+                }
+            } else {
+                item.reference_no = claimEntryRef(all, item.project_type);
+            }
+        }
     });
 
     all[idx].items = JSON.parse(JSON.stringify(draft.items));
