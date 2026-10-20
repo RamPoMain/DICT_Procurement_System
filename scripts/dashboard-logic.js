@@ -261,60 +261,86 @@ function getRecordItems(record) {
 
 // ------------------------------------------------------------
 // ENTRY REFERENCE NUMBERS
-// Every entry (line item) gets a permanent reference number, ENT-0001,
-// ENT-0002, ... so people can point at one entry ("see ENT-0012").
-// It is handed out when the entry is first saved and never changes after
-// that. It is only displayed in the Add / View Entry form (request-modal.js),
-// never in the tables, previews or exports.
+// Every entry (line item) gets a permanent reference number made of a
+// category code (its Type of Project) and a running number inside that
+// category:
 //
-// The counter lives in localStorage ('entry_ref_counter') and is never
-// lower than the highest number already on a record, so numbers are not
-// reused after an entry is deleted. Entries carried over into a new PPMP
-// version keep their number (they are the same entry).
+//     GDS-0001  Goods                GDS-0002 ...
+//     INF-0001  Infrastructure       INF-0002 ...
+//     CSV-0001  Consulting Services  CSV-0002 ...
+//     GEN-0001  no / unrecognised type
+//
+// It is handed out when the entry is first saved (request form, bulk import
+// or typed straight into the Entries dropdown) and never changes after that,
+// even if the entry's type is edited later. It is only displayed in the
+// Entries section (the expanded PPMP table), never in the request form,
+// dashboard, previews or exports.
+//
+// Each category keeps its own counter in localStorage
+// ('entry_ref_counters'), never lower than the highest number already on a
+// record, so numbers are not reused after an entry is deleted. Entries
+// carried over into a new PPMP version keep their number (same entry).
+// Old "ENT-0001" numbers are left exactly as they are.
 // ------------------------------------------------------------
-const ENTRY_REF_PREFIX = 'ENT-';
-const ENTRY_REF_COUNTER_KEY = 'entry_ref_counter';
-let entryRefLastIssued = 0;
+const ENTRY_REF_CATEGORIES = {
+    'Goods': 'GDS',
+    'Infrastructure': 'INF',
+    'Consulting Services': 'CSV'
+};
+const ENTRY_REF_OTHER = 'GEN';
+const ENTRY_REF_COUNTERS_KEY = 'entry_ref_counters';
+const entryRefLastIssued = {};
 
-function formatEntryRef(n) {
-    return ENTRY_REF_PREFIX + String(n).padStart(4, '0');
+function getEntryRefCategory(projectType) {
+    return ENTRY_REF_CATEGORIES[String(projectType || '').trim()] || ENTRY_REF_OTHER;
+}
+
+function formatEntryRef(code, n) {
+    return code + '-' + String(n).padStart(4, '0');
 }
 
 function parseEntryRef(ref) {
-    const m = /^ENT-(\d+)$/.exec(String(ref || ''));
-    return m ? parseInt(m[1], 10) : 0;
+    const m = /^([A-Z]{3})-(\d+)$/.exec(String(ref || ''));
+    return m ? { code: m[1], n: parseInt(m[2], 10) } : null;
 }
 
-function readEntryRefCounter(records) {
+function readEntryRefCounter(records, code) {
     let highest = 0;
+    function look(ref) {
+        const p = parseEntryRef(ref);
+        if (p && p.code === code) highest = Math.max(highest, p.n);
+    }
     (records || []).forEach(function (record) {
-        highest = Math.max(highest, parseEntryRef(record && record.reference_no));
-        if (record && Array.isArray(record.items)) {
-            record.items.forEach(function (item) {
-                highest = Math.max(highest, parseEntryRef(item && item.reference_no));
-            });
+        if (!record) return;
+        look(record.reference_no);
+        if (Array.isArray(record.items)) {
+            record.items.forEach(function (item) { look(item && item.reference_no); });
         }
     });
     let stored = 0;
-    try { stored = parseInt(localStorage.getItem(ENTRY_REF_COUNTER_KEY), 10) || 0; } catch (e) { /* ignore */ }
-    return Math.max(highest, stored, entryRefLastIssued);
+    try {
+        const all = JSON.parse(localStorage.getItem(ENTRY_REF_COUNTERS_KEY)) || {};
+        stored = parseInt(all[code], 10) || 0;
+    } catch (e) { /* ignore */ }
+    return Math.max(highest, stored, entryRefLastIssued[code] || 0);
 }
 
-// The number the next new entry will get (does not reserve it).
-function peekNextEntryRef(records) {
-    return formatEntryRef(readEntryRefCounter(records) + 1);
+// Reserves and returns the next number in the category of `projectType`.
+function claimEntryRef(records, projectType) {
+    const code = getEntryRefCategory(projectType);
+    const n = readEntryRefCounter(records, code) + 1;
+    entryRefLastIssued[code] = n;
+    try {
+        const all = JSON.parse(localStorage.getItem(ENTRY_REF_COUNTERS_KEY)) || {};
+        all[code] = n;
+        localStorage.setItem(ENTRY_REF_COUNTERS_KEY, JSON.stringify(all));
+    } catch (e) { /* ignore */ }
+    return formatEntryRef(code, n);
 }
 
-// Reserves and returns the next number.
-function claimEntryRef(records) {
-    const n = readEntryRefCounter(records) + 1;
-    entryRefLastIssued = n;
-    try { localStorage.setItem(ENTRY_REF_COUNTER_KEY, String(n)); } catch (e) { /* ignore */ }
-    return formatEntryRef(n);
-}
-
-// Gives a number to every entry saved before this feature existed (oldest
-// PPMP first). Does nothing once every entry has one.
+// Gives a number to every entry that has none yet (oldest PPMP first), e.g.
+// entries saved before this feature existed. Does nothing once every entry
+// has one.
 function backfillEntryReferences() {
     let db;
     try { db = JSON.parse(localStorage.getItem('procurement_records')); } catch (e) { return; }
@@ -325,12 +351,12 @@ function backfillEntryReferences() {
         if (Array.isArray(record.items) && record.items.length > 0) {
             record.items.forEach(function (item) {
                 if (item && !item.reference_no) {
-                    item.reference_no = claimEntryRef(db);
+                    item.reference_no = claimEntryRef(db, item.project_type);
                     changed = true;
                 }
             });
         } else if (!record.reference_no) {
-            record.reference_no = claimEntryRef(db);   // old single-item record
+            record.reference_no = claimEntryRef(db, record.project_type);   // old single-item record
             changed = true;
         }
     });
@@ -874,7 +900,13 @@ function selectOptionsHtml(options, current) {
 }
 
 // Builds one editable item row (12 field columns + a Remove column).
-function buildEditableItemRow(record, item) {
+// Small read-only tag with an entry's reference number (Entries section only).
+function renderEntryRefBadge(item) {
+    if (!item || !item.reference_no) return '';
+    return '<span class="ep-ref" title="Entry reference number">' + escapeHtml(item.reference_no) + '</span>';
+}
+
+function buildEditableItemRow(record, item, showRef) {
     const rid = Number(record.id);
     const iid = item.id;
 
@@ -902,7 +934,7 @@ function buildEditableItemRow(record, item) {
     return `
         <tr data-preview-item-row="${iid}">
             <!-- Col 1: Description -->
-            <td><textarea class="ep-input" rows="2" data-record-id="${rid}" data-item-id="${iid}" data-field="project_description" oninput="onPreviewFieldInput(this)" placeholder="Describe the project...">${escapeHtml(item.project_description || '')}</textarea></td>
+            <td>${showRef ? renderEntryRefBadge(item) : ''}<textarea class="ep-input" rows="2" data-record-id="${rid}" data-item-id="${iid}" data-field="project_description" oninput="onPreviewFieldInput(this)" placeholder="Describe the project...">${escapeHtml(item.project_description || '')}</textarea></td>
             
             <!-- Col 2: Project Type -->
             <td><select class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="project_type" onchange="onPreviewFieldInput(this)">
@@ -1126,7 +1158,7 @@ function renderPreviewList(values) {
 }
 
 
-function buildExcelPreviewMarkup(record, editable, showSignatures = true) {
+function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRef = false) {
     const isIndicative = record.is_indicative === 'Indicative';
     const isFinal = record.is_indicative === 'Final';
     const items = editable ? ensurePreviewDraft(record).items : getRecordItems(record);
@@ -1140,7 +1172,7 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true) {
     );
 
     const itemRows = editable
-        ? items.map(item => buildEditableItemRow(record, item)).join('')
+        ? items.map(item => buildEditableItemRow(record, item, showRef)).join('')
         : items.map(item => {
         const itemStrategies = renderPreviewList(item.strategies);
 
@@ -1150,7 +1182,7 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true) {
 
         return `
             <tr class="ep-item-row" ${itemFilterAttrs(item, showCS)}>
-                <td>${escapeHtml(item.project_description || '')}</td>
+                <td>${showRef ? renderEntryRefBadge(item) : ''}${escapeHtml(item.project_description || '')}</td>
                 <td>${escapeHtml(item.project_type || '')}</td>
                 <td>${escapeHtml(item.quantity_size || '')}</td>
                 <td>${escapeHtml(item.mode || '')}</td>
@@ -2866,7 +2898,7 @@ function savePreviewChanges(recordId) {
 
     // Entries typed straight into the dropdown get their reference number now.
     draft.items.forEach(function (item) {
-        if (!item.reference_no) item.reference_no = claimEntryRef(all);
+        if (!item.reference_no) item.reference_no = claimEntryRef(all, item.project_type);
     });
 
     all[idx].items = JSON.parse(JSON.stringify(draft.items));
@@ -2923,7 +2955,8 @@ function itemFilterAttrs(item, includeCriteriaStrategies = true) {
         item.remarks, item.general_requirements, item.start_date, item.end_date, item.delivery_period,
         formatPesoExact(parseBudgetNumber(item.budget)),
         includeCriteriaStrategies ? (Array.isArray(item.strategies) ? item.strategies.join(' ') : item.strategies) : '',
-        docNames.join(' ')
+        docNames.join(' '),
+        item.reference_no
     ].map(function (v) { return String(v == null ? '' : v); }).join(' ').toLowerCase();
 
     return 'data-search="' + escapeHtml(haystack) + '"' +
@@ -3161,7 +3194,7 @@ function renderEntries(records) {
                     <div class="db-entry-expand-inner">
                         ${buildPreviewToolbarHtml(Number(record.id), { record: record, canEdit: isEditable })}
                         ${isEditing ? '' : buildItemFilterBarHtml(record)}
-                        ${buildExcelPreviewMarkup(record, isEditing, false)}
+                        ${buildExcelPreviewMarkup(record, isEditing, false, true)}
                     </div>
                 </td>
             </tr>

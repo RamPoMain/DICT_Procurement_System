@@ -881,6 +881,14 @@
             db.push(rec);
         }
 
+        // Every imported entry gets a reference number in its own category
+        // (Goods / Infrastructure / Consulting Services), in file order.
+        stamped.forEach(function (it) {
+            if (!it.reference_no && typeof claimEntryRef === 'function') {
+                it.reference_no = claimEntryRef(db, it.project_type);
+            }
+        });
+
         try {
             localStorage.setItem('procurement_records', JSON.stringify(db));
         } catch (err) {

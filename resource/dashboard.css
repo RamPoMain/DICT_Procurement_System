@@ -2356,3 +2356,20 @@ html[data-theme="light"] .modal-status-badge.is-returned { color: #B91C1C; }
     .app-preview-spacer { display: none; }
     .app-preview-btn { flex: 1; }
 }
+
+/* Entry reference number tag (Entries section only) */
+.ep-ref {
+    display: inline-block;
+    margin: 0 0 4px;
+    padding: 1px 7px;
+    border-radius: 4px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    color: #1d4ed8;
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+}
+.ep-ref + textarea { display: block; }
