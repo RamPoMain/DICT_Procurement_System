@@ -493,7 +493,7 @@ async function buildAPP_PDF(targetYear = null) {
         const strategies = Array.isArray(item.strategies) ? item.strategies.join('\n') : (item.strategies || '');
 
         return [
-            item.project_description || item.project_type || 'N/A',
+            item.project_type || 'N/A',   // Project Title column = Goods / Infrastructure / Consulting Services
             item.end_user || 'N/A',
             item.quantity_size ? `${item.project_description} (${item.quantity_size})` : (item.project_description || ''),
             item.mode || 'N/A',
