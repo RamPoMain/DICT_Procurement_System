@@ -302,8 +302,14 @@
             if (rule) {
                 if (type && rule.allowedTypes && rule.allowedTypes.indexOf(type) === -1) {
                     errors.push('Mode "' + mode + '" is restricted to ' + rule.allowedTypes.join(', ') + ' under ' + rule.legalBasis + '.');
-                } else if (budget.number > rule.maxBudget) {
-                    errors.push('Budget of ' + pesoText(budget.number) + ' exceeds the allowable limit of ' + pesoText(rule.maxBudget) + ' for ' + mode + ' (' + rule.legalBasis + ').');
+                } else if ((typeof isBracketMismatch === 'function' && isBracketMismatch(mode, budget.number)) ||
+                           (typeof exceedsModeCeiling === 'function' ? exceedsModeCeiling(mode, budget.number) : budget.number > rule.maxBudget)) {
+                    if (typeof budgetBracketMessage === 'function' &&
+                        typeof isBracketMode === 'function' && isBracketMode(mode)) {
+                        errors.push(budgetBracketMessage(mode, budget.number));
+                    } else {
+                        errors.push('Budget of ' + pesoText(budget.number) + ' exceeds the allowable limit of ' + pesoText(rule.maxBudget) + ' for ' + mode + ' (' + rule.legalBasis + ').');
+                    }
                 }
             }
         }

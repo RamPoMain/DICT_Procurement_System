@@ -414,6 +414,29 @@ function getItemsMissingDocuments(record) {
         .filter(function (entry) { return !itemHasSupportingDocument(entry.item); });
 }
 
+// Items whose Mode of Procurement does not match their budget bracket
+// (Direct Acquisition / SVP / Competitive Bidding). A PPMP with any of these
+// cannot be submitted for approval.
+function getItemsBudgetModeMismatch(record) {
+    if (typeof isBracketMismatch !== 'function') return [];
+    return getRecordItems(record)
+        .map(function (item, index) { return { number: index + 1, item: item }; })
+        .filter(function (entry) {
+            const n = parsePreviewBudget(String(entry.item.budget == null ? '' : entry.item.budget).trim());
+            return isBracketMismatch(String(entry.item.mode || '').trim(), n);
+        });
+}
+
+function buildBudgetMismatchMessage(list) {
+    const shown = list.slice(0, 3).map(function (m) {
+        const n = parsePreviewBudget(String(m.item.budget));
+        return 'Item ' + m.number + ' (' + formatPesoMessage(n) + ' is not within ' + m.item.mode + ')';
+    });
+    const more = list.length - shown.length;
+    return 'Fix the Mode of Procurement or Estimated Budget before submitting: ' + shown.join(', ') +
+        (more > 0 ? ' and ' + more + ' more' : '') + '. Open the PPMP and press Edit on each item.';
+}
+
 function buildMissingDocsMessage(missing) {
     const shown = missing.slice(0, 3).map(function (m) {
         return 'Item ' + m.number + ' (' + getRequiredDocLabel(m.item.project_type) + ')';
@@ -866,11 +889,19 @@ function buildPreviewToolbarHtml(recordId, options = {}) {
         // click working, so pressing it still explains what is missing; the
         // real block is in openSubmitApprovalDialog() and
         // confirmSubmitForApproval().
-        const submitBlocked = missingDocs > 0;
+        const modeMismatchCount = options.record && isPpmpDraft(options.record)
+            ? getItemsBudgetModeMismatch(options.record).length
+            : 0;
+        const modeWarning = modeMismatchCount > 0
+            ? `<span class="ep-doc-warning" title="Submit for Approval is blocked until every item's Mode of Procurement matches its budget">${modeMismatchCount} ${modeMismatchCount === 1 ? 'item has' : 'items have'} a mode that does not match the budget</span>`
+            : '';
+        const submitBlocked = missingDocs > 0 || modeMismatchCount > 0;
         const submitBtn = (options.record && isPpmpDraft(options.record) && canReq)
             ? `<button type="button" class="ep-submit-btn${submitBlocked ? ' is-blocked' : ''}"` +
               (submitBlocked
-                  ? ` aria-disabled="true" title="Attach a supporting document to ${missingDocs === 1 ? 'the item' : 'each of the ' + missingDocs + ' items'} marked 'Needs document' before submitting"`
+                  ? (missingDocs > 0
+                      ? ` aria-disabled="true" title="Attach a supporting document to ${missingDocs === 1 ? 'the item' : 'each of the ' + missingDocs + ' items'} marked 'Needs document' before submitting"`
+                      : ` aria-disabled="true" title="Fix the Mode of Procurement or Estimated Budget on ${modeMismatchCount === 1 ? 'the item' : 'each of the ' + modeMismatchCount + ' items'} flagged before submitting"`)
                   : '') +
               ` onclick="openSubmitApprovalDialog(${recordId})">Submit for Approval</button>`
             : '';
@@ -879,7 +910,7 @@ function buildPreviewToolbarHtml(recordId, options = {}) {
         <div class="ep-toolbar">
             <div class="ep-toolbar-status">
                 <span class="ep-dirty-indicator hidden" data-record-id="${recordId}">Unsaved changes</span>
-                ${docWarning}
+                ${docWarning}${modeWarning}
             </div>
             <div class="ep-toolbar-actions">
                 ${options.record && options.actions !== false ? buildEntryActionButtonsHtml(options.record) : ''}
@@ -2227,6 +2258,7 @@ function onPreviewFieldInput(el) {
 
     if (field === 'start_date' || field === 'end_date') syncPreviewDateLimits(recordId, itemId, item);
     if (field === 'project_type') refreshPreviewDocCell(recordId, itemId);
+    if (field === 'budget' || field === 'mode') updatePreviewBracketHint(recordId, itemId);
 
     if (isPreviewTouched(draft, itemId, field)) validatePreviewField(recordId, itemId, field);
 }
@@ -2416,12 +2448,12 @@ function validatePreviewItem(item) {
                 errors.mode = `"${modeVal}" under ${rule.legalBasis} is restricted to ${rule.allowedTypes.join(' / ')}.`;
             }
             // Budget threshold check
-            else if (budgetNumber > rule.maxBudget) {
-                if (modeVal === 'Direct Acquisition') {
-                    errors.mode = `Budget exceeds ₱200,000.00 ceiling for Direct Acquisition (RA 12009 Sec. 32).`;
-                    errors.budget = errors.mode;
-                } else if (modeVal === 'Small Value Procurement (SVP)') {
-                    errors.mode = `Budget exceeds ₱2,000,000.00 ceiling for SVP (RA 12009 Sec. 31). Requires Competitive Bidding.`;
+            else if ((typeof isBracketMismatch === 'function' && isBracketMismatch(modeVal, budgetNumber)) ||
+                     (typeof exceedsModeCeiling === 'function' ? exceedsModeCeiling(modeVal, budgetNumber) : budgetNumber > rule.maxBudget)) {
+                if (typeof isBracketMode === 'function' ? isBracketMode(modeVal) : (modeVal === 'Direct Acquisition' || modeVal === 'Small Value Procurement (SVP)')) {
+                    errors.mode = typeof budgetBracketMessage === 'function'
+                        ? budgetBracketMessage(modeVal, budgetNumber)
+                        : 'Budget is above the ' + modeVal + ' limit (' + rule.legalBasis + ').';
                     errors.budget = errors.mode;
                 } else if (modeVal === 'Shopping') {
                     errors.mode = `Budget exceeds ₱2,000,000.00 ceiling for Shopping (RA 12009 Sec. 30).`;
@@ -2453,6 +2485,42 @@ function isPreviewTouched(draft, itemId, field) {
 
 // Shows (or clears) the red outline + message under one field, on every
 // surface currently showing this record.
+// Line under the Budget cell in the inline editor: the recommended mode for
+// this amount. Hidden when the budget is empty/invalid or when the chosen mode
+// does not fit the amount (the blocking error covers that). Needs
+// getRecommendedMode() & co. from request-modal.js.
+function updatePreviewBracketHint(recordId, itemId) {
+    if (typeof getRecommendedMode !== 'function' || typeof exceedsModeCeiling !== 'function') return;
+    const draft = previewDrafts[recordId];
+    if (!draft) return;
+    const item = draft.items.find(it => it.id == itemId);
+    const input = document.querySelector(
+        `[data-record-id="${recordId}"][data-item-id="${itemId}"][data-field="budget"]`
+    );
+    const cell = input ? input.closest('td') : null;
+    if (!item || !cell) return;
+
+    let el = cell.querySelector('.ep-bracket-hint');
+    const n = parsePreviewBudget(String(item.budget == null ? '' : item.budget).trim());
+    const mode = String(item.mode || '').trim();
+    const chosen = (typeof MODE_BUDGET_BRACKETS !== 'undefined')
+        ? MODE_BUDGET_BRACKETS.find(t => t.mode === mode) : null;
+
+    if (!(n > 0) || (chosen && isBracketMismatch(mode, n))) {
+        if (el) el.remove();
+        return;
+    }
+    if (!el) {
+        el = document.createElement('div');
+        el.className = 'ep-bracket-hint';
+        el.style.cssText = 'margin-top:4px;font-size:11px;line-height:1.35;font-weight:600;';
+        cell.appendChild(el);
+    }
+    const rec = getRecommendedMode(n);
+    el.style.color = '#0284c7';
+    el.textContent = 'Recommended for this budget: ' + rec.mode + ' (' + rec.label + ')';
+}
+
 function setPreviewFieldError(recordId, itemId, field, message) {
     const selector = field === 'strategies'
         ? `.ep-strategies-box[data-record-id="${recordId}"][data-item-id="${itemId}"]`
@@ -2526,6 +2594,7 @@ function reapplyPreviewErrors() {
         const recordId = Number(key);
         const draft = previewDrafts[key];
         draft.items.forEach(item => {
+            updatePreviewBracketHint(recordId, item.id);
             const errors = validatePreviewItem(item);
             PREVIEW_ALL_FIELDS.forEach(field => {
                 if (isPreviewTouched(draft, item.id, field) && errors[field]) {
@@ -2766,6 +2835,12 @@ function openSubmitApprovalDialog(recordId) {
         return;
     }
 
+    const modeMismatch = getItemsBudgetModeMismatch(record);
+    if (modeMismatch.length > 0) {
+        showToast(buildBudgetMismatchMessage(modeMismatch));
+        return;
+    }
+
     if (!submitApprovalEl) submitApprovalEl = buildSubmitApprovalDialog();
     submitApprovalRecordId = recordId;
 
@@ -2815,6 +2890,13 @@ function confirmSubmitForApproval() {
     const missingDocs = getItemsMissingDocuments(all[idx]);
     if (missingDocs.length > 0) {
         showToast(buildMissingDocsMessage(missingDocs));
+        refreshPreviewSurfaces(recordId);
+        return;
+    }
+
+    const modeMismatch = getItemsBudgetModeMismatch(all[idx]);
+    if (modeMismatch.length > 0) {
+        showToast(buildBudgetMismatchMessage(modeMismatch));
         refreshPreviewSurfaces(recordId);
         return;
     }

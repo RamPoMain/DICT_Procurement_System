@@ -1783,48 +1783,6 @@ function validateModeTypeMatch() {
     return true;
 }
 
-// Cross-checks both Type/Description and Budget Thresholds
-function validateModeBudgetMatch() {
-    // 1. Run live type/description check first
-    if (!validateModeTypeMatch()) {
-        return false;
-    }
-
-    // 2. Run budget ceiling check if budget is entered
-    const modeSelect = document.getElementById('modeOfProcurement');
-    const budgetInput = document.getElementById('budget');
-    if (!modeSelect || !budgetInput) return true;
-
-    const modeValue = modeSelect.value.trim();
-    const budgetRaw = budgetInput.value.trim();
-    if (!modeValue || !budgetRaw) return true;
-
-    const budgetNumber = parseFloat(budgetRaw.replace(/,/g, ''));
-    if (isNaN(budgetNumber) || budgetNumber <= 0) return true;
-
-    const rule = (typeof PROCUREMENT_MODE_RULES !== 'undefined') ? PROCUREMENT_MODE_RULES[modeValue] : null;
-    if (rule && budgetNumber > rule.maxBudget) {
-        let ceilingMsg = '';
-        if (modeValue === 'Direct Acquisition') {
-            ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the ₱200,000.00 ceiling for Direct Acquisition under RA 12009 Sec. 32. Please use SVP or Competitive Bidding.`;
-        } else if (modeValue === 'Small Value Procurement (SVP)') {
-            ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the ₱2,000,000.00 ceiling for SVP under RA 12009 Sec. 31. Requires Competitive Bidding.`;
-        } else if (modeValue === 'Shopping') {
-            ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the ₱2,000,000.00 ceiling for Shopping under RA 12009 Sec. 30.`;
-        } else {
-            ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the allowable threshold of ${formatPesoMessage(rule.maxBudget)} for ${modeValue}.`;
-        }
-
-        showFieldError('modeOfProcurement', ceilingMsg);
-        showFieldError('budget', ceilingMsg);
-        return false;
-    }
-
-    clearFieldError('modeOfProcurement');
-    clearFieldError('budget');
-    return true;
-}
-
 // ============================================================
 // RECOMMENDED MODE OF PROCUREMENT (BUDGET-BASED)
 // ============================================================
@@ -1913,16 +1871,88 @@ const PROCUREMENT_MODE_RULES = {
     }
 };
 
+// Each bracket applies BELOW its `below` limit, so the limit itself belongs to
+// the next bracket: PHP 200,000 is already SVP and PHP 2,000,000 is already
+// Competitive Bidding.
 const MODE_BUDGET_BRACKETS = [
-    { max: 200000, mode: 'Direct Acquisition', label: '₱0 – ₱200,000' },
-    { max: 2000000, mode: 'Small Value Procurement (SVP)', label: '₱200,001 – ₱2,000,000' },
-    { max: Infinity, mode: 'Competitive Bidding', label: '₱2,000,000 and above' }
+    { below: 200000, mode: 'Direct Acquisition', label: '₱0 – ₱199,999' },
+    { below: 2000000, mode: 'Small Value Procurement (SVP)', label: '₱200,000 – ₱1,999,999' },
+    { below: Infinity, mode: 'Competitive Bidding', label: '₱2,000,000 and above' }
 ];
 
 
 function getRecommendedMode(budgetNumber) {
-    const bracket = MODE_BUDGET_BRACKETS.find(tier => budgetNumber <= tier.max);
+    const bracket = MODE_BUDGET_BRACKETS.find(tier => budgetNumber < tier.below);
     return bracket || MODE_BUDGET_BRACKETS[MODE_BUDGET_BRACKETS.length - 1];
+}
+
+// Direct Acquisition, SVP and Competitive Bidding are tied to a budget bracket:
+// the amount must fall inside the bracket of the mode that was picked.
+function isBracketMode(modeValue) {
+    return MODE_BUDGET_BRACKETS.some(tier => tier.mode === modeValue);
+}
+
+// True when one of those three modes is chosen but the amount belongs to a
+// different bracket (too big OR too small). Blocks saving and submitting.
+function isBracketMismatch(modeValue, budgetNumber) {
+    if (!isBracketMode(modeValue) || !(budgetNumber > 0)) return false;
+    return getRecommendedMode(budgetNumber).mode !== modeValue;
+}
+
+// True when the budget is TOO BIG for the chosen mode. Direct Acquisition and
+// SVP stop below their bracket limit; other modes use their own maxBudget.
+// Shared by the form, the inline edit (dashboard-logic.js) and bulk import.
+function exceedsModeCeiling(modeValue, budgetNumber) {
+    const rule = PROCUREMENT_MODE_RULES[modeValue];
+    if (!rule) return false;
+    if (modeValue === 'Direct Acquisition') return budgetNumber >= 200000;
+    if (modeValue === 'Small Value Procurement (SVP)') return budgetNumber >= 2000000;
+    return budgetNumber > rule.maxBudget;
+}
+
+// Message for an entry whose budget falls outside the bracket of its mode.
+function budgetBracketMessage(modeValue, budgetNumber) {
+    const own = MODE_BUDGET_BRACKETS.find(tier => tier.mode === modeValue);
+    const rec = getRecommendedMode(budgetNumber);
+    const rule = PROCUREMENT_MODE_RULES[modeValue] || {};
+    return `Estimated budget of ${formatPesoMessage(budgetNumber)} is outside the ${modeValue} bracket (${own ? own.label : 'n/a'}). It falls under ${rec.mode} (${rec.label})` +
+        (rule.legalBasis ? ` - ${rule.legalBasis}.` : '.');
+}
+
+// Line under the Estimated Budget field: the recommended mode for this amount.
+// Hidden when the budget is empty/invalid, or when the chosen mode does not fit
+// the amount (the blocking error is shown instead).
+function updateBudgetBracketHint(modeValue, budgetNumber) {
+    const input = document.getElementById('budget');
+    const group = input ? input.closest('.field-group') : null;
+    if (!group) return;
+
+    let el = document.getElementById('budgetBracketHint');
+    if (!el) {
+        el = document.createElement('p');
+        el.id = 'budgetBracketHint';
+        el.className = 'mode-hint hidden';
+        el.style.fontWeight = '600';
+        group.insertBefore(el, group.querySelector('.field-error-msg'));
+    }
+
+    if (!(budgetNumber > 0)) {
+        el.textContent = '';
+        el.classList.add('hidden');
+        return;
+    }
+
+    const rec = getRecommendedMode(budgetNumber);
+    const chosen = MODE_BUDGET_BRACKETS.find(tier => tier.mode === modeValue);
+
+    if (chosen && chosen.mode !== rec.mode) {
+        el.textContent = '';
+        el.classList.add('hidden');
+        return;
+    }
+    el.style.color = '#0284c7';
+    el.textContent = 'Recommended for this budget: ' + rec.mode + ' (' + rec.label + ')';
+    el.classList.remove('hidden');
 }
 
 
@@ -1951,10 +1981,22 @@ function validateModeBudgetMatch() {
     const budgetRaw = budgetInput.value.trim();
     const projectType = typeSelect ? typeSelect.value.trim() : '';
 
+    const hintNumber = parseFloat(budgetRaw.replace(/,/g, ''));
+    updateBudgetBracketHint(modeValue, isNaN(hintNumber) ? NaN : hintNumber);
+
     if (!modeValue || !budgetRaw) return true;
 
     const budgetNumber = parseFloat(budgetRaw.replace(/,/g, ''));
     if (isNaN(budgetNumber) || budgetNumber <= 0) return true;
+
+    // The amount must fall in the bracket of the chosen Direct Acquisition /
+    // SVP / Competitive Bidding mode - too high OR too low is not allowed.
+    if (isBracketMismatch(modeValue, budgetNumber)) {
+        const bracketMsg = budgetBracketMessage(modeValue, budgetNumber);
+        showFieldError('modeOfProcurement', bracketMsg);
+        showFieldError('budget', bracketMsg);
+        return false;
+    }
 
     const rule = PROCUREMENT_MODE_RULES[modeValue];
     if (!rule) {
@@ -1971,12 +2013,10 @@ function validateModeBudgetMatch() {
     }
 
     // 2. Budget Maximum Threshold Ceiling Check
-    if (budgetNumber > rule.maxBudget) {
+    if (exceedsModeCeiling(modeValue, budgetNumber)) {
         let ceilingMsg = '';
-        if (modeValue === 'Direct Acquisition') {
-            ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the ₱200,000.00 ceiling for Direct Acquisition under RA 12009 Sec. 32. Please use Small Value Procurement (SVP) or Competitive Bidding.`;
-        } else if (modeValue === 'Small Value Procurement (SVP)') {
-            ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the ₱2,000,000.00 ceiling for Small Value Procurement (SVP) under RA 12009 Sec. 31. Projects exceeding ₱2,000,000.00 require Competitive Bidding (or an authorized alternative mode).`;
+        if (modeValue === 'Direct Acquisition' || modeValue === 'Small Value Procurement (SVP)') {
+            ceilingMsg = budgetBracketMessage(modeValue, budgetNumber);
         } else if (modeValue === 'Shopping') {
             ceilingMsg = `Estimated budget of ${formatPesoMessage(budgetNumber)} exceeds the ₱2,000,000.00 ceiling for Shopping under RA 12009 Sec. 30.`;
         } else {
