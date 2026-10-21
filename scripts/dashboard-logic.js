@@ -295,20 +295,32 @@ function getEntryRefCategory(projectType) {
     return ENTRY_REF_CATEGORIES[String(projectType || '').trim()] || ENTRY_REF_OTHER;
 }
 
-function formatEntryRef(code, n) {
-    return code + '-' + String(n).padStart(4, '0');
+// New format:  <fiscal year>-<category>-<running number>   e.g. 2026-GDS-0001
+// Old format:  <category>-<running number>                 e.g. GDS-0001
+// Old references are left exactly as they are; both formats are understood.
+function entryRefYear(fiscalYear) {
+    const y = String(fiscalYear == null ? '' : fiscalYear).trim();
+    return /^\d{4}$/.test(y) ? y : String(new Date().getFullYear());
+}
+
+function formatEntryRef(code, n, year) {
+    const num = String(n).padStart(4, '0');
+    return year ? year + '-' + code + '-' + num : code + '-' + num;
 }
 
 function parseEntryRef(ref) {
-    const m = /^([A-Z]{3})-(\d+)$/.exec(String(ref || ''));
-    return m ? { code: m[1], n: parseInt(m[2], 10) } : null;
+    const m = /^(?:(\d{4})-)?([A-Z]{3})-(\d+)$/.exec(String(ref || ''));
+    return m ? { year: m[1] || null, code: m[2], n: parseInt(m[3], 10) } : null;
 }
 
-function readEntryRefCounter(records, code) {
+// Highest number already used for this category IN THIS FISCAL YEAR. Each year
+// (and each category) therefore starts again at 0001 for new references;
+// references from other years and old-format references are not counted.
+function readEntryRefCounter(records, code, year) {
     let highest = 0;
     function look(ref) {
         const p = parseEntryRef(ref);
-        if (p && p.code === code && p.n > highest) {
+        if (p && p.code === code && p.year === year && p.n > highest) {
             highest = p.n;
         }
     }
@@ -326,22 +338,24 @@ function readEntryRefCounter(records, code) {
     return highest;
 }
 
-// Reserves and returns the next number in the category of `projectType`.
-function claimEntryRef(records, projectType) {
+// Reserves and returns the next number in the category of `projectType` for the
+// given fiscal year (defaults to the current year when none is valid).
+function claimEntryRef(records, projectType, fiscalYear) {
     const allRecords = records || JSON.parse(localStorage.getItem('procurement_records')) || [];
     const code = getEntryRefCategory(projectType);
-    
+    const year = entryRefYear(fiscalYear);
+
     // Finds the true highest number currently existing in storage
-    const currentHighest = readEntryRefCounter(allRecords, code);
+    const currentHighest = readEntryRefCounter(allRecords, code, year);
     const n = currentHighest + 1;
-    
+
     try {
         const all = JSON.parse(localStorage.getItem(ENTRY_REF_COUNTERS_KEY)) || {};
-        all[code] = n;
+        all[year + '-' + code] = n;
         localStorage.setItem(ENTRY_REF_COUNTERS_KEY, JSON.stringify(all));
     } catch (e) { /* ignore */ }
-    
-    return formatEntryRef(code, n);
+
+    return formatEntryRef(code, n, year);
 }
 
 // Gives a number to every entry that has none yet (oldest PPMP first), e.g.
@@ -357,12 +371,12 @@ function backfillEntryReferences() {
         if (Array.isArray(record.items) && record.items.length > 0) {
             record.items.forEach(function (item) {
                 if (item && !item.reference_no) {
-                    item.reference_no = claimEntryRef(db, item.project_type);
+                    item.reference_no = claimEntryRef(db, item.project_type, record.fiscal_year);
                     changed = true;
                 }
             });
         } else if (!record.reference_no) {
-            record.reference_no = claimEntryRef(db, record.project_type);   // old single-item record
+            record.reference_no = claimEntryRef(db, record.project_type, record.fiscal_year);   // old single-item record
             changed = true;
         }
     });
@@ -1946,26 +1960,6 @@ async function runPreviewApp(targetYear = null) {
     }
 }
 
-function getLatestApprovedPpmpPerOffice(records, fiscalYear) {
-    const latestByOffice = new Map();
-    const targetYearStr = fiscalYear != null ? String(fiscalYear).trim() : null;
-
-    (records || []).forEach(record => {
-        if (!record || record.status !== 'Completed') return;
-        
-        // Strictly filter to the requested fiscal year
-        if (targetYearStr && String(record.fiscal_year).trim() !== targetYearStr) return;
-
-        const office = record.end_user || 'N/A';
-        const current = latestByOffice.get(office);
-        if (!current || isApprovedLaterThan(record, current)) {
-            latestByOffice.set(office, record);
-        }
-    });
-
-    return Array.from(latestByOffice.values());
-}
-
 async function runGenerateApp(targetYear = null) {
     const session = typeof getSession === 'function' ? getSession() : null;
     if (!isAppAuthorizedUser(session)) {
@@ -2943,7 +2937,7 @@ function savePreviewChanges(recordId) {
                     item.mode = 'Negotiated Procurement';
                 }
             } else {
-                item.reference_no = claimEntryRef(all, item.project_type);
+                item.reference_no = claimEntryRef(all, item.project_type, all[idx].fiscal_year);
             }
         }
     });

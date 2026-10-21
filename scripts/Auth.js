@@ -26,7 +26,7 @@ const ACCOUNTS = [
         password: 'ILCDB123',
         role: 'ILCDB',
         roleName: 'ILCDB',
-        office: 'ICT Literacy Competency and Development Bureu',
+        office: 'ICT Literacy Competency and Development bureau',
         canRequest: true
     },
     {
@@ -64,11 +64,11 @@ const ACCOUNTS = [
         password: 'ILCDBH123',
         role: 'ILCDBH',
         roleName: 'ILCDB Head',
-        office: 'ICT Literacy Competency and Development Bureu',
+        office: 'ICT Literacy Competency and Development bureau',
         canRequest: true,
         canApprove: true,
         stage: 'HEAD',
-        headOf: 'ICT Literacy Competency and Development Bureu'
+        headOf: 'ICT Literacy Competency and Development bureau'
     },
 
     {

@@ -846,12 +846,18 @@
             return false;
         }
         var ppmpNo;
+        // What the reference check needs to know about the PPMP the items land in.
+        var refBaseItems = [], refYear = '', refOffice = '', refRecordId = null;
 
         if (existing) {
             var merged = (typeof getRecordItems === 'function' ? getRecordItems(existing) : []).slice().concat(stamped);
             var updated = Object.assign({}, existing, { items: merged });
             db[db.findIndex(function (r) { return r.id == currentEditingId; })] = updated;
             ppmpNo = updated.ppmp_no;
+            refBaseItems = typeof getRecordItems === 'function' ? getRecordItems(existing) : [];
+            refYear = existing.fiscal_year;
+            refOffice = existing.end_user;
+            refRecordId = existing.id;
             
         } else {
             ppmpNo = header.ppmp_no || (typeof getNextPpmpNumber === 'function' ? String(getNextPpmpNumber(header.fiscal_year)) : 'N/A');
@@ -864,6 +870,10 @@
                 : null;
             var initialItems = prevApproved ? clonePpmpItemsForCarryOver(prevApproved, stamp) : [];
             var finalItems = initialItems.concat(stamped);
+            refBaseItems = initialItems;
+            refYear = fiscalYear;
+            refOffice = office;
+            refRecordId = stamp;
 
                         var rec = {
                 id: stamp,
@@ -881,12 +891,34 @@
             db.push(rec);
         }
 
-        // Every imported entry gets a reference number in its own category
-        // (Goods / Infrastructure / Consulting Services), in file order.
+        // Every imported entry gets a reference number, in file order:
+        //  - same description as an existing entry (same office) -> it is a re-bid,
+        //    so it keeps that entry's reference number, exactly like adding it in
+        //    the form; after two earlier biddings it becomes Negotiated Procurement;
+        //  - otherwise a new <year>-<category>-<number> reference is issued.
+        // Rows are checked one at a time against the PPMP's earlier items plus the
+        // rows already handled, so rows not yet numbered never count as attempts.
+        var refPool = refBaseItems.slice();
         stamped.forEach(function (it) {
-            if (!it.reference_no && typeof claimEntryRef === 'function') {
-                it.reference_no = claimEntryRef(db, it.project_type);
+            if (!it.reference_no) {
+                var refInfo = typeof findExistingReferenceInfo === 'function'
+                    ? findExistingReferenceInfo(it.project_description, it.project_type,
+                        { id: refRecordId, end_user: refOffice, items: refPool })
+                    : null;
+                if (refInfo) {
+                    it.reference_no = refInfo.reference_no;
+                    if (refInfo.competitiveCount >= 2) {
+                        var autoNote = 'Negotiated Procurement after Two Failed Biddings (RA 12009 Sec. 33)';
+                        it.mode = 'Negotiated Procurement';
+                        if (!it.remarks || String(it.remarks).indexOf('Two Failed Biddings') === -1) {
+                            it.remarks = it.remarks ? it.remarks + ' [' + autoNote + ']' : autoNote;
+                        }
+                    }
+                } else if (typeof claimEntryRef === 'function') {
+                    it.reference_no = claimEntryRef(db, it.project_type, refYear);
+                }
             }
+            refPool.push(it);
         });
 
         try {

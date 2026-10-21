@@ -1,11 +1,4 @@
-/* Layout for Step 3 */
-.form-single-column {
-  max-width: 800px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
+/* Layout for Step 3: .form-single-column lives in base.css */
 
 /* Upload Zone Presentation Style */
 .upload-zone {

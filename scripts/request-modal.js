@@ -433,6 +433,9 @@ function clonePpmpItemsForCarryOver(sourceRecord, newBaseTimestamp) {
     
     return items.map((item, idx) => {
         const cloned = JSON.parse(JSON.stringify(item));
+        // Remember the entry this copy came from, so a carried-over copy is never
+        // counted as one more bidding attempt (see findExistingReferenceInfo).
+        cloned.origin_id = item.origin_id || item.id;
         // Assign a fresh unique ID so editing does not mutate the old version
         cloned.id = base + idx + 1;
         // Keep the original item as-is (Entry 1 and 2 will stay 'Competitive Bidding')
@@ -916,6 +919,9 @@ function findExistingReferenceInfo(description, projectType, currentRecord) {
     let matchedRefNo = null;
     let competitiveCount = 0;
     let matchingItems = [];
+    // A PPMP version carries its approved entries over as copies. A copy is the
+    // SAME entry, not a new bidding attempt, so every entry is counted once.
+    const seenEntries = new Set();
 
     function checkItem(it) {
         if (!it) return;
@@ -923,6 +929,13 @@ function findExistingReferenceInfo(description, projectType, currentRecord) {
 
         // Match if the project description is identical
         if (itDesc === desc) {
+            const entryKey = String(it.origin_id || it.id);
+            if (it.id != null && seenEntries.has(entryKey)) {
+                if (it.reference_no && !matchedRefNo) matchedRefNo = it.reference_no;
+                return;
+            }
+            if (it.id != null) seenEntries.add(entryKey);
+
             if (it.reference_no && !matchedRefNo) {
                 matchedRefNo = it.reference_no;
             }
@@ -1153,8 +1166,10 @@ function saveProcurementRequest() {
             }
         } else {
             // Brand-new project
+            const refYearField = document.getElementById('fiscal_year');
+            const refFiscalYear = (refYearField && refYearField.value) || (existingRecord && existingRecord.fiscal_year) || '';
             itemPayload.reference_no = (typeof claimEntryRef === 'function')
-                ? claimEntryRef(db, itemPayload.project_type)
+                ? claimEntryRef(db, itemPayload.project_type, refFiscalYear)
                 : '';
         }
     }
