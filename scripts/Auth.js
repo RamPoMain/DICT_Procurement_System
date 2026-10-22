@@ -23,7 +23,7 @@
 const ACCOUNTS = [
     {
         email: 'ILCDB@dict.gov.ph',
-        password: 'ILCDB123',
+        password: '1' || 'ilcdb123',
         role: 'ILCDB',
         roleName: 'ILCDB',
         office: 'ICT Literacy Competency and Development bureau',
@@ -31,7 +31,7 @@ const ACCOUNTS = [
     },
     {
         email: 'FPIAP@dict.gov.ph',
-        password: 'FPIAP123',
+        password: '1' || 'fpiap123',
         role: 'FPIAP',
         roleName: 'FPIAP',
         office: 'Free Public Internet Access Program',
@@ -40,7 +40,7 @@ const ACCOUNTS = [
 
     {
         email: 'GASS@dict.gov.ph',
-        password: 'GASS123',
+        password: '1' || 'gass123',
         role: 'GASS',
         roleName: 'GASS',
         office: 'General Administration and Support Services',
@@ -50,7 +50,7 @@ const ACCOUNTS = [
     // Head accounts are the first approvers to be followed by TOD
     {
         email: 'FPIAPHEAD@dict.gov.ph',
-        password: 'FPIAPH123',
+        password: '1',
         role: 'FPIAPH',
         roleName: 'FPIAP Head',
         office: 'Free Public Internet Access Program',
@@ -61,7 +61,7 @@ const ACCOUNTS = [
     },
     {
         email: 'ILCDBHEAD@dict.gov.ph',
-        password: 'ILCDBH123',
+        password: '1',
         role: 'ILCDBH',
         roleName: 'ILCDB Head',
         office: 'ICT Literacy Competency and Development bureau',
@@ -73,7 +73,7 @@ const ACCOUNTS = [
 
     {
         email: 'GASSHEAD@dict.gov.ph',
-        password: 'GASSH123',
+        password: '1',
         role: 'GASSH',
         roleName: 'GASS Head',
         office: 'General Administration and Support Services',
@@ -86,7 +86,7 @@ const ACCOUNTS = [
     //Next is the TOD, who is the second approver after the heads of the offices
     {
         email: 'tod@dict.gov.ph',
-        password: 'tod123',
+        password: '1',
         role: 'TOD',
         roleName: 'Technical Operations Division',
         office: 'Technical Operations Division',
@@ -97,7 +97,7 @@ const ACCOUNTS = [
     //Third is the Budget Officer
     {
         email: 'BudgetOfficer@dict.gov.ph',
-        password: 'Budget123',
+        password: '1',
         role: 'BO',
         roleName: 'Budget Officer',
         office: 'Budget Office',
@@ -107,7 +107,7 @@ const ACCOUNTS = [
 
     {
         email: 'ard@dict.gov.ph',
-        password: 'ard123',
+        password: '1',
         role: 'ARD',
         roleName: 'Assistant Regional Director',
         canApprove: true,
@@ -121,7 +121,7 @@ const ACCOUNTS = [
         // one, so this account sees every office's PPMPs. To authorize
         // another account, just add `canApprove: true` to it.
         email: 'rd@dict.gov.ph',
-        password: 'rd123',
+        password: '1',
         role: 'RD',
         roleName: 'Regional Director',
         canApprove: true,
@@ -134,7 +134,7 @@ const ACCOUNTS = [
         // `canTrackApprovals` (below) is what lets it see submitted PPMPs (and
         // which stage / approver each one is with) - never Drafts.
         email: 'suppliers@dict.gov.ph',
-        password: 'suppliers123',
+        password: '1',
         role: 'SUP',
         roleName: 'Suppliers',
         canRequest: false,
@@ -143,7 +143,7 @@ const ACCOUNTS = [
     },
     {
         email: 'test@dict.gov.ph',
-        password: 'test123',
+        password: '1',
         role: 'POP',
         roleName: 'POP (Test Account)',
         office: 'POP Test Office',

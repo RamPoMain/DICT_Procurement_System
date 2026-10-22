@@ -754,7 +754,7 @@ const PREVIEW_MODE_GROUPS = [
     { label: 'Alternative Modes', options: [
         'Limited Source Bidding', 'Direct Contracting', 'Repeat Order', 'Shopping',
         'Small Value Procurement (SVP)', 'Direct Acquisition', 'Competitive Dialogue',
-        'Negotiated Procurement'
+        'Negotiated Procurement', 'Negotiated Procurement', 'Negotiated Procurement - Two Failed Biddings'
     ] }
 ];
 
@@ -763,6 +763,7 @@ const PREVIEW_CRITERIA_OPTIONS = [
     'Most Economically Advantageous Responsive Bid (MEARB)',
     'Most Advantageous Responsive Bid (MARB) / HRRB / SRRB',
     'Lowest Comparative or Competitive Responsive Bid (LCCRB)',
+    'Negotiated',
     'N/A'
 ];
 
@@ -1386,26 +1387,18 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
                     <small>Date: ${escapeHtml(new Date().toLocaleDateString())}</small>
                 </div>
                 <div>
-                    <p>Certified Funds Available:</p>
-                    <span></span>
-                    <strong>BRYAN JOHN M. SABLAS</strong>
-                    <small>Signature over Printed Name</small>
-                    <small>Budget Officer II</small>
-                </div>
-                <div>
-                    <p>Approved by:</p>
-                    <span></span>
-                    <strong>SITTIE RAHMA V. ALAWI, MTM, CSSGB</strong>
-                    <small>Signature over Printed Name</small>
-                    <small>Regional Director, DICT X</small>
-                    ${isPpmpClosed(record) && record.approved_by ? `<small>Approved in system by ${escapeHtml(record.approved_by.name)}${record.approved_at ? ' on ' + escapeHtml(formatApprovalDate(record.approved_at)) : ''}</small>` : ''}
-                </div>
-                <div>
                     <p>Endorsed by:</p>
                     <span></span>
                     <strong>EUGENE C. RAPOSALA III</strong>
                     <small>Signature over Printed Name</small>
                     <small>Chief, Technical Operations Division</small>
+                </div>
+                <div>
+                    <p>Certified Funds Available:</p>
+                    <span></span>
+                    <strong>BRYAN JOHN M. SABLAS</strong>
+                    <small>Signature over Printed Name</small>
+                    <small>Budget Officer II</small>
                 </div>
             </div>
             ` : ''}

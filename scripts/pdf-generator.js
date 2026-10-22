@@ -273,17 +273,18 @@ async function generatePPMP_PDF() {
         columnStyles: columnStyles
     });
 
-    // 5. SIGNATORIES
+    // 5. SIGNATORIES (RD removed for PPMP entries)
     const pageHeight = doc.internal.pageSize.getHeight();
     let finalY = doc.lastAutoTable.finalY + 15;
-    // The signature blocks need ~70mm; start a new page instead of running off the bottom.
-    if (finalY + 70 > pageHeight) {
+    
+    // Check if new page is needed (only ~45mm needed now for 1 row of signatures)
+    if (finalY + 45 > pageHeight) {
         doc.addPage();
         finalY = 20;
     }
     doc.setFontSize(7);
     
-    // Left: Prepared By
+    // Left: Prepared by / Submitted by
     doc.text("Prepared by / Submitted by:", margin, finalY);
     doc.line(margin, finalY + 10, margin + 60, finalY + 10);
     doc.setFont("helvetica", "bold");
@@ -293,23 +294,24 @@ async function generatePPMP_PDF() {
     doc.text("Focal, ICT Literacy Competency and Development Bureau X", margin + 30, finalY + 22, { align: "center" });
     doc.text("Date: " + new Date().toLocaleDateString(), margin + 30, finalY + 30, { align: "center" });
 
-    // Center: Certified Funds
-    doc.text("Certified Funds Available:", pageWidth / 2 - 30, finalY);
+    // Center: Endorsed by (Chief, TOD)
+    doc.text("Endorsed by:", pageWidth / 2 - 30, finalY);
     doc.line(pageWidth / 2 - 35, finalY + 10, pageWidth / 2 + 25, finalY + 10);
     doc.setFont("helvetica", "bold");
-    doc.text("BRYAN JOHN M. SABLAS", pageWidth / 2 - 5, finalY + 14, { align: "center" });
+    doc.text("EUGENE C. RAPOSALA III", pageWidth / 2 - 5, finalY + 14, { align: "center" });
     doc.setFont("helvetica", "normal");
     doc.text("Signature over Printed Name", pageWidth / 2 - 5, finalY + 18, { align: "center" });
-    doc.text("Budget Officer II", pageWidth / 2 - 5, finalY + 22, { align: "center" });
+    doc.text("Chief, Technical Operations Division", pageWidth / 2 - 5, finalY + 22, { align: "center" });
 
-    // Right: Approved By
-    doc.text("Approved by:", pageWidth - 70, finalY);
+    // Right: Certified Funds Available (Budget Officer)
+    doc.text("Certified Funds Available:", pageWidth - 70, finalY);
     doc.line(pageWidth - 70, finalY + 10, pageWidth - margin, finalY + 10);
     doc.setFont("helvetica", "bold");
-    doc.text("SITTIE RAHMA V. ALAWI, MTM, CSSGB", pageWidth - 35, finalY + 14, { align: "center" });
+    doc.text("BRYAN JOHN M. SABLAS", pageWidth - 35, finalY + 14, { align: "center" });
     doc.setFont("helvetica", "normal");
     doc.text("Signature over Printed Name", pageWidth - 35, finalY + 18, { align: "center" });
-    doc.text("Regional Director, DICT X", pageWidth - 35, finalY + 22, { align: "center" });
+    doc.text("Budget Officer II", pageWidth - 35, finalY + 22, { align: "center" });
+    
     if (approvedRecord && approvedRecord.status === 'Completed' && approvedRecord.approved_by) {
         const approvedOn = approvedRecord.approved_at
             ? ' on ' + new Date(Number(approvedRecord.approved_at)).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })

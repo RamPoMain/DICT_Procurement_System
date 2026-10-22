@@ -613,15 +613,15 @@
                 }
             }
 
-            // 9. Signatures Block (Rows 18 to 32)
+            // 9. Signatures Block (RD removed for PPMP entries)
             sheet.getRow(18).height = 20;
             sheet.getCell('A18').value = 'Prepared by / Submitted by:';
             sheet.getCell('A18').font = { name: 'Arial', size: 9.5, bold: true };
 
-            sheet.getCell('F18').value = 'Certified Funds Available:';
+            sheet.getCell('F18').value = 'Endorsed by:';
             sheet.getCell('F18').font = { name: 'Arial', size: 9.5, bold: true };
 
-            sheet.getCell('L18').value = 'Approved by:';
+            sheet.getCell('L18').value = 'Certified Funds Available:';
             sheet.getCell('L18').font = { name: 'Arial', size: 9.5, bold: true };
 
             var sigUnderline = { top: { style: 'medium', color: { argb: 'FF000000' } } };
@@ -637,7 +637,6 @@
                 nCell.font = { name: 'Arial', size: 9.5, bold: true };
                 nCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
-                // Apply underline border across merged cells
                 for (var c = startCol; c <= endCol; c++) {
                     sheet.getRow(21).getCell(c).border = sigUnderline;
                 }
@@ -663,8 +662,8 @@
             }
 
             makeSigBlock(1, 4, 'JAYMARK D. DUMIO', 'Signature over Printed Name', 'Focal, ICT Literacy Competency and Development Bureau X', dateStr);
-            makeSigBlock(6, 9, 'BRYAN JOHN M. SABLAS', 'Signature over Printed Name', 'Budget Officer II', null);
-            makeSigBlock(12, 15, 'SITTIE RAHMA V. ALAWI, MTM, CSSGB', 'Signature over Printed Name', 'Regional Director, DICT X', null);
+            makeSigBlock(6, 9, 'EUGENE C. RAPOSALA III', 'Signature over Printed Name', 'Chief, Technical Operations Division', null);
+            makeSigBlock(12, 15, 'BRYAN JOHN M. SABLAS', 'Signature over Printed Name', 'Budget Officer II', null);
 
             // Endorsed By Section
             sheet.getCell('A27').value = 'Endorsed by:';

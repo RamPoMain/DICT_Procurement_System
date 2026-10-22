@@ -433,12 +433,10 @@ function clonePpmpItemsForCarryOver(sourceRecord, newBaseTimestamp) {
     
     return items.map((item, idx) => {
         const cloned = JSON.parse(JSON.stringify(item));
-        // Remember the entry this copy came from, so a carried-over copy is never
-        // counted as one more bidding attempt (see findExistingReferenceInfo).
+        // Carry over the original attempt ID so clones across versions aren't re-counted
         cloned.origin_id = item.origin_id || item.id;
-        // Assign a fresh unique ID so editing does not mutate the old version
+        // Fresh unique ID so editing does not mutate the old record
         cloned.id = base + idx + 1;
-        // Keep the original item as-is (Entry 1 and 2 will stay 'Competitive Bidding')
         return cloned;
     });
 }
@@ -1062,6 +1060,7 @@ function initializeStrategies() {
 function checkMatchingProjectLive() {
     const descEl = document.getElementById('project_description');
     const modeEl = document.getElementById('modeOfProcurement');
+    const critEl = document.getElementById('bid_evaluation_criteria');
     if (!descEl) return;
 
     const desc = descEl.value.trim();
@@ -1073,18 +1072,23 @@ function checkMatchingProjectLive() {
 
     if (refInfo) {
         if (refInfo.competitiveCount >= 2) {
-            // Automatically switch mode to Negotiated Procurement
-            if (modeEl && modeEl.value !== 'Negotiated Procurement') {
-                modeEl.value = 'Negotiated Procurement';
+            ensureNegotiatedTwoFailedOptions();
+            
+            if (modeEl && modeEl.value !== 'Negotiated Procurement – Two Failed Biddings') {
+                modeEl.value = 'Negotiated Procurement – Two Failed Biddings';
                 if (typeof showToast === 'function') {
-                    showToast(`Matched ${refInfo.reference_no} (2 failed biddings). Mode set to Negotiated Procurement.`);
+                    showToast(`Matched ${refInfo.reference_no} (2 failed biddings). Mode set to Negotiated Procurement – Two Failed Biddings.`);
                 }
             }
-            showFieldError('modeOfProcurement', `Matches ${refInfo.reference_no}: 2 failed biddings detected. Automatically set to Negotiated Procurement (RA 12009 Sec. 33).`);
+            if (critEl && critEl.value !== 'Negotiated') {
+                critEl.value = 'Negotiated';
+            }
+            showFieldError('modeOfProcurement', `Matches ${refInfo.reference_no}: 2 failed biddings detected. Mode automatically set to Negotiated Procurement – Two Failed Biddings.`);
         } else {
-            // Inform the user it matched Attempt #1
             showFieldError('project_description', `Linked to existing reference: ${refInfo.reference_no} (Attempt #${refInfo.competitiveCount + 1})`);
         }
+    } else {
+        clearFieldError('project_description');
     }
 }
 
@@ -1112,53 +1116,53 @@ function buildSavedDocFromEntry(entry) {
 }
 
 /**
- * Finds if there is an existing project entry with the same description and type
- * under this office and fiscal year, and counts how many times it was set to Competitive Bidding.
- */
-/**
- * Finds an existing entry matching the project description.
- * Reuses its reference_no and counts how many times it was under Competitive Bidding.
+ * Finds an existing entry matching the project description for the same office.
+ * - Exact text match only (case-sensitive, trimmed).
+ * - Ignores fiscal year.
+ * - Deduplicates carried-over items so they are NOT counted as extra attempts.
  */
 function findExistingReferenceInfo(description, projectType, currentRecord) {
-    const desc = String(description || '').trim().toLowerCase();
+    // Exact text only: trimmed, preserving exact casing and punctuation
+    const desc = String(description || '').trim();
     if (!desc) return null;
 
     const allRecords = JSON.parse(localStorage.getItem('procurement_records')) || [];
     const session = typeof getSession === 'function' ? getSession() : null;
 
-    // Read office from the form field first, then current record, then session
+    // Resolve current office
     const endUserField = document.getElementById('end_user');
     const formOffice = endUserField ? endUserField.value.trim() : '';
     const office = formOffice || (currentRecord && currentRecord.end_user) || (session ? session.office : null);
-    const normOffice = office ? office.trim().toLowerCase() : '';
+    if (!office) return null;
+    const normOffice = office.trim();
 
     let matchedRefNo = null;
     let competitiveCount = 0;
     let matchingItems = [];
-    // A PPMP version carries its approved entries over as copies. A copy is the
-    // SAME entry, not a new bidding attempt, so every entry is counted once.
-    const seenEntries = new Set();
+    const seenAttemptKeys = new Set();
 
     function checkItem(it) {
         if (!it) return;
-        const itDesc = String(it.project_description || '').trim().toLowerCase();
+        // Exact text match (case-sensitive)
+        const itDesc = String(it.project_description || '').trim();
 
-        // Match if the project description is identical
         if (itDesc === desc) {
-            const entryKey = String(it.origin_id || it.id);
-            if (it.id != null && seenEntries.has(entryKey)) {
-                if (it.reference_no && !matchedRefNo) matchedRefNo = it.reference_no;
-                return;
-            }
-            if (it.id != null) seenEntries.add(entryKey);
-
             if (it.reference_no && !matchedRefNo) {
                 matchedRefNo = it.reference_no;
             }
+
+            // DEDUPLICATION: An attempt is uniquely identified by its origin_id (or id).
+            // Carried-over copies share the same origin_id and are skipped so they aren't counted twice.
+            const attemptKey = String(it.origin_id || it.id);
+            if (attemptKey && seenAttemptKeys.has(attemptKey)) {
+                return;
+            }
+            if (attemptKey) seenAttemptKeys.add(attemptKey);
+
             matchingItems.push(it);
 
             const isCompetitive = it.mode === 'Competitive Bidding' ||
-                String(it.mode || '').toLowerCase().includes('competitive bidding');
+                String(it.mode || '').trim().toLowerCase() === 'competitive bidding';
             
             if (isCompetitive) {
                 competitiveCount++;
@@ -1166,17 +1170,36 @@ function findExistingReferenceInfo(description, projectType, currentRecord) {
         }
     }
 
-    // 1. Check items inside the current PPMP being edited (e.g. carried-over items)
+    // 1. Check items in the current PPMP being edited (including carried-over items)
     if (currentRecord) {
         const currentItems = typeof getRecordItems === 'function' ? getRecordItems(currentRecord) : (currentRecord.items || []);
         currentItems.forEach(checkItem);
     }
 
-    // 2. Check all saved PPMPs in localStorage (case-insensitive office match)
-    allRecords.forEach(r => {
-        if (currentRecord && r.id === currentRecord.id) return;
-        if (normOffice && r.end_user && r.end_user.trim().toLowerCase() !== normOffice) return;
+    // 2. Filter other records belonging to the same office (ignoring fiscal year)
+    const officeRecords = allRecords.filter(r => {
+        if (!r || (currentRecord && r.id === currentRecord.id)) return false;
+        return String(r.end_user || '').trim() === normOffice;
+    });
 
+    // Group approved records by fiscal year to inspect ONLY the latest approved PPMP of each year
+    // (Prevents older baseline snapshots from re-counting carried items)
+    const approvedByYear = new Map();
+    officeRecords.filter(r => r.status === 'Completed').forEach(r => {
+        const y = String(r.fiscal_year || '').trim();
+        const existing = approvedByYear.get(y);
+        if (!existing || (Number(r.approved_at || r.id) > Number(existing.approved_at || existing.id))) {
+            approvedByYear.set(y, r);
+        }
+    });
+
+    approvedByYear.forEach(r => {
+        const rItems = typeof getRecordItems === 'function' ? getRecordItems(r) : (r.items || []);
+        rItems.forEach(checkItem);
+    });
+
+    // Also check pending draft records if any exist
+    officeRecords.filter(r => r.status !== 'Completed').forEach(r => {
         const rItems = typeof getRecordItems === 'function' ? getRecordItems(r) : (r.items || []);
         rItems.forEach(checkItem);
     });
@@ -1188,6 +1211,40 @@ function findExistingReferenceInfo(description, projectType, currentRecord) {
         competitiveCount: competitiveCount,
         totalEntries: matchingItems.length
     };
+}
+
+/**
+ * Automatically appends "[1st Failure]" and "[2nd Failure]" remarks to 
+ * earlier competitive bidding attempts sharing the same reference number.
+ */
+function updatePriorFailedBiddingRemarks(itemList, targetRefNo) {
+    if (!Array.isArray(itemList) || !targetRefNo) return;
+
+    // Filter all competitive bidding attempts sharing this reference number
+    const matchingCompetitive = itemList.filter(it => 
+        it && it.reference_no === targetRefNo &&
+        (it.mode === 'Competitive Bidding' || String(it.mode || '').toLowerCase().includes('competitive bidding'))
+    );
+
+    // Entry 1 gets "[1st Failure]"
+    if (matchingCompetitive.length >= 1) {
+        const it1 = matchingCompetitive[0];
+        const str1 = String(it1.remarks || '');
+        if (!str1.toLowerCase().includes('1st failure')) {
+            const note = '1st Failure';
+            it1.remarks = str1.trim() ? `${str1.trim()} [${note}]` : `[${note}]`;
+        }
+    }
+
+    // Entry 2 gets "[2nd Failure]"
+    if (matchingCompetitive.length >= 2) {
+        const it2 = matchingCompetitive[1];
+        const str2 = String(it2.remarks || '');
+        if (!str2.toLowerCase().includes('2nd failure')) {
+            const note = '2nd Failure';
+            it2.remarks = str2.trim() ? `${str2.trim()} [${note}]` : `[${note}]`;
+        }
+    }
 }
 
 function saveProcurementRequest() {
@@ -1367,33 +1424,33 @@ function saveProcurementRequest() {
     // --------------------------------------------------------------------
     // REFERENCE NUMBER & TWO FAILED BIDDINGS LOGIC
     // --------------------------------------------------------------------
-    const existingItemForRef = (existingRecord && currentEditingItemId && typeof getRecordItems === 'function')
-        ? getRecordItems(existingRecord).find(it => it.id == currentEditingItemId)
-        : null;
-
     if (existingItemForRef && existingItemForRef.reference_no) {
-        // Editing an existing line item: keep its own reference number and mode as-is
         itemPayload.reference_no = existingItemForRef.reference_no;
+        if (existingItemForRef.origin_id) itemPayload.origin_id = existingItemForRef.origin_id;
     } else {
-        // Adding a NEW entry: check if it matches an existing project
         const refInfo = (typeof findExistingReferenceInfo === 'function')
             ? findExistingReferenceInfo(itemPayload.project_description, itemPayload.project_type, existingRecord)
             : null;
 
         if (refInfo) {
-            // Re-use the exact same reference number (e.g. GDS-0001)
             itemPayload.reference_no = refInfo.reference_no;
+            itemPayload.origin_id = itemPayload.id;
 
-            // ONLY this 3rd entry switches to Negotiated Procurement!
+            // ----------------------------------------------------
+            // 3RD ATTEMPT: AUTO-SET MODE, CRITERIA & REMARKS
+            // ----------------------------------------------------
             if (refInfo.competitiveCount >= 2) {
-                itemPayload.mode = 'Negotiated Procurement';
-                const autoNote = 'Negotiated Procurement after Two Failed Biddings (RA 12009 Sec. 33)';
+                itemPayload.mode = 'Negotiated Procurement – Two Failed Biddings';
+                itemPayload.bid_evaluation_criteria = 'Negotiated';
+
+                const autoNote = 'Negotiated Procurement – Two Failed Biddings (RA 12009 Sec. 33)';
                 if (!itemPayload.remarks || !itemPayload.remarks.includes('Two Failed Biddings')) {
                     itemPayload.remarks = itemPayload.remarks ? `${itemPayload.remarks} [${autoNote}]` : autoNote;
                 }
             }
         } else {
             // Brand-new project
+            itemPayload.origin_id = itemPayload.id;
             const refYearField = document.getElementById('fiscal_year');
             const refFiscalYear = (refYearField && refYearField.value) || (existingRecord && existingRecord.fiscal_year) || '';
             itemPayload.reference_no = (typeof claimEntryRef === 'function')
@@ -1406,10 +1463,6 @@ function saveProcurementRequest() {
     let isNewItem = false;
 
     if (existingRecord) {
-        // Updating the PPMP header, plus either replacing one existing
-        // item or appending a brand-new one onto the same record — this
-        // is what keeps "Add another entry" from creating a second row
-        // in Entries.
         const items = (typeof getRecordItems === 'function' ? getRecordItems(existingRecord) : [existingRecord]).slice();
 
         if (currentEditingItemId) {
@@ -1425,26 +1478,27 @@ function saveProcurementRequest() {
             isNewItem = true;
         }
 
-    entry = Object.assign({}, existingRecord, {
-        ppmp_no:       document.getElementById('ppmp_no').value || existingRecord.ppmp_no || 'N/A',
-        is_indicative: document.getElementById('is_indicative').value || existingRecord.is_indicative,
-        end_user:      document.getElementById('end_user').value || existingRecord.end_user || 'N/A',
-        fiscal_year:   document.getElementById('fiscal_year').value || existingRecord.fiscal_year,
-        items:         items
-    });
-    } else {
-        // Define the timestamp ID for the new PPMP
-        const stamp = Date.now();
+        // ----------------------------------------------------
+        // TAG PRIOR ENTRIES WITH "1st Failure" / "2nd Failure"
+        // ----------------------------------------------------
+        if (refInfo && typeof updatePriorFailedBiddingRemarks === 'function') {
+            updatePriorFailedBiddingRemarks(items, refInfo.reference_no);
+        }
 
+        entry = Object.assign({}, existingRecord, {
+            ppmp_no:       document.getElementById('ppmp_no').value || existingRecord.ppmp_no || 'N/A',
+            is_indicative: document.getElementById('is_indicative').value || existingRecord.is_indicative,
+            end_user:      document.getElementById('end_user').value || existingRecord.end_user || 'N/A',
+            fiscal_year:   document.getElementById('fiscal_year').value || existingRecord.fiscal_year,
+            items:         items
+        });
+    } else {
+        const stamp = Date.now();
         const session = typeof getSession === 'function' ? getSession() : null;
         const office = document.getElementById('end_user').value || (session ? session.office : 'N/A');
         const fiscalYear = document.getElementById('fiscal_year').value;
         const ppmpNo = document.getElementById('ppmp_no').value || 'N/A';
 
-        // ----------------------------------------------------
-        // VERSION CARRY-OVER LOGIC:
-        // Carry over all approved items from the previous version of this year
-        // ----------------------------------------------------
         const prevApproved = getLatestApprovedPpmpForOffice(office, fiscalYear);
         let versionItems = [];
         let carriedCount = 0;
@@ -1454,10 +1508,15 @@ function saveProcurementRequest() {
             carriedCount = versionItems.length;
         }
 
-        // Add the new line item created in this submission
         versionItems.push(itemPayload);
 
-        // Brand-new PPMP (Version 1 or subsequent Version N)
+        // ----------------------------------------------------
+        // TAG PRIOR ENTRIES WITH "1st Failure" / "2nd Failure"
+        // ----------------------------------------------------
+        if (refInfo && typeof updatePriorFailedBiddingRemarks === 'function') {
+            updatePriorFailedBiddingRemarks(versionItems, refInfo.reference_no);
+        }
+
         entry = {
             id: stamp,
             creatorId: session ? session.id : null,
@@ -1946,6 +2005,39 @@ function validateIndividualField(fieldGroup) {
     return true;
 }
 
+function ensureNegotiatedTwoFailedOptions() {
+    // 1. Ensure Mode option exists
+    const modeSelect = document.getElementById('modeOfProcurement');
+    if (modeSelect) {
+        const modeVal = 'Negotiated Procurement – Two Failed Biddings';
+        const exists = Array.from(modeSelect.options).some(o => o.value === modeVal);
+        if (!exists) {
+            const opt = document.createElement('option');
+            opt.value = modeVal;
+            opt.textContent = modeVal;
+            const altGroup = Array.from(modeSelect.querySelectorAll('optgroup')).find(g => (g.label || '').toLowerCase().includes('alternative'));
+            if (altGroup) {
+                altGroup.appendChild(opt);
+            } else {
+                modeSelect.appendChild(opt);
+            }
+        }
+    }
+
+    // 2. Ensure Criteria option exists
+    const critSelect = document.getElementById('bid_evaluation_criteria');
+    if (critSelect) {
+        const critVal = 'Negotiated';
+        const exists = Array.from(critSelect.options).some(o => o.value === critVal);
+        if (!exists) {
+            const opt = document.createElement('option');
+            opt.value = critVal;
+            opt.textContent = critVal;
+            critSelect.appendChild(opt);
+        }
+    }
+}
+
 // ============================================================
 // DYNAMIC N/A OPTIONS INJECTION
 // Ensures "N/A" is available in Criteria and Strategies even if missing in HTML
@@ -2102,6 +2194,15 @@ const PROCUREMENT_MODE_RULES = {
         allowedTypes: ['Goods', 'Infrastructure', 'Consulting Services'],
         legalBasis: 'RA 12009 Sec. 26',
         bracketLabel: 'Complex or innovative procurement'
+    },
+    'Negotiated Procurement – Two Failed Biddings': {
+        mode: 'Negotiated Procurement – Two Failed Biddings',
+        category: 'Alternative Mode',
+        minBudget: 0.01,
+        maxBudget: Infinity,
+        allowedTypes: ['Goods', 'Infrastructure', 'Consulting Services'],
+        legalBasis: 'RA 12009 Sec. 33',
+        bracketLabel: 'Two failed biddings (Sec. 33)'
     },
     'Negotiated Procurement': {
         mode: 'Negotiated Procurement',
