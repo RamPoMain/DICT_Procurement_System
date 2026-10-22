@@ -495,6 +495,14 @@ function refreshPpmpNumberForYear() {
         return;
     }
 
+    const conflictMessage = getYearPpmpConflictMessage(year);
+    if (conflictMessage) {
+        ppmpField.value = '';
+        if (typeof showFieldError === 'function') showFieldError('fiscal_year', conflictMessage);
+        return;
+    }
+    if (typeof clearFieldError === 'function') clearFieldError('fiscal_year');
+
     const nextNo = getNextPpmpNumber(year);
     ppmpField.value = nextNo;
     if (typeof clearFieldError === 'function') clearFieldError('ppmp_no');
@@ -586,6 +594,155 @@ function getPendingPpmpGroups() {
 }
 
 
+// ============================================================
+// FINAL + INDICATIVE PPMPs IN PARALLEL
+//
+// An office can work on a Final PPMP (current fiscal year) and an Indicative
+// PPMP (next fiscal year) at the same time. The rule is now "one open PPMP
+// per office per fiscal year" instead of "one open PPMP per office":
+//   - a PPMP that is For Approval only blocks its OWN fiscal year;
+//   - a Draft only receives new entries for its own fiscal year;
+//   - the other year can still be started (or its Draft extended).
+// Only accounts with canRequest (requesting offices and Unit Heads - the
+// people who can create and edit PPMPs) can get here; startNewRequest()
+// and saveProcurementRequest() both check that.
+// ============================================================
+
+// Fiscal years that can run in parallel: current year = Final, next year =
+// Indicative. A year whose APP is already Final is closed and left out.
+function getParallelPpmpYears() {
+    const base = new Date().getFullYear();
+    const closed = y => typeof isAppFinal === 'function' && isAppFinal(y);
+    return [
+        { year: String(base),     kind: 'Final' },
+        { year: String(base + 1), kind: 'Indicative' }
+    ].filter(lane => !closed(lane.year));
+}
+
+// Fiscal years a PPMP can be filed under: the current year (Final) and the
+// next year (Indicative) - nothing further out. When the APPs of those years
+// are already Final, the first open year after them is allowed instead
+// (the same rollover year a new PPMP is pre-filled with).
+function getAllowedPpmpYears() {
+    const base = new Date().getFullYear();
+    const years = [String(base), String(base + 1)];
+    const rollover = typeof getDefaultNewPpmpFiscalYear === 'function'
+        ? getDefaultNewPpmpFiscalYear()
+        : null;
+    if (rollover && years.indexOf(rollover) === -1) years.push(rollover);
+    return years;
+}
+
+// "Final" / "Indicative" for a record (what the user chose), or - when it has
+// none - what its fiscal year implies. '' for any other year.
+function getPpmpKindForYear(year, record) {
+    if (record && record.is_indicative) return record.is_indicative;
+    const base = new Date().getFullYear();
+    const y = parseInt(year, 10);
+    if (y === base) return 'Final';
+    if (y === base + 1) return 'Indicative';
+    return '';
+}
+
+// Every PPMP record of the signed-in office (all records for accounts that
+// have no office).
+function getOfficePpmpRecords() {
+    const session = typeof getSession === 'function' ? getSession() : null;
+    const office = session && session.office ? session.office : null;
+    const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    return office ? all.filter(r => r.end_user === office) : all;
+}
+
+// The office may only have ONE open PPMP per fiscal year. Returns the message
+// to show when the PPMP in the form would break that, or '' when it is fine.
+// Applies when creating a brand-new PPMP, or when an existing Draft is moved
+// to another fiscal year; adding an entry to a PPMP never changes its year.
+function getYearPpmpConflictMessage(yearText) {
+    const year = normalizeFiscalYear(yearText);
+    if (!year || isViewMode) return '';
+
+    let excludeId = null;
+    if (currentEditingId) {
+        const own = (JSON.parse(localStorage.getItem('procurement_records')) || [])
+            .find(r => r.id == currentEditingId);
+        if (!own || normalizeFiscalYear(own.fiscal_year) === year) return '';
+        excludeId = own.id;
+    } else if (!ppmpNumberFollowsYear) {
+        return '';
+    }
+
+    const allowed = getAllowedPpmpYears();
+    if (allowed.indexOf(year) === -1) {
+        const base = String(new Date().getFullYear());
+        return 'PPMPs can only be filed for FY ' + base + ' (Final) or FY ' + String(Number(base) + 1) +
+            ' (Indicative); FY ' + year + ' is not available.';
+    }
+
+    const others = getOfficePpmpRecords().filter(r =>
+        r.id != excludeId && normalizeFiscalYear(r.fiscal_year) === year
+    );
+
+    const submitted = others.find(r => getPpmpStatus(r) === 'For Approval');
+    if (submitted) {
+        return 'PPMP No. ' + (submitted.ppmp_no || 'N/A') + ' for FY ' + year +
+            ' is submitted for approval. You cannot start another PPMP for FY ' + year +
+            ' until it is approved or returned. Use a different fiscal year.';
+    }
+
+    const draft = others.find(r => getPpmpStatus(r) === 'Draft');
+    if (draft) {
+        return 'You already have a Draft PPMP (No. ' + (draft.ppmp_no || 'N/A') + ') for FY ' + year +
+            '. Choose it under New Request to add another entry, or use a different fiscal year.';
+    }
+
+    return '';
+}
+
+// What New Request can offer right now:
+//   choices - [{ value, text }]  "add|<recordId>" or "new|<year>|<kind>"
+//   blocked - [text]             lanes that are waiting on approvers
+function buildNewRequestChoices() {
+    const records = getOfficePpmpRecords();
+    const choices = [];
+    const blocked = [];
+    const draftYears = {};
+
+    // Existing Drafts first (one per fiscal year): entries go into those.
+    records
+        .filter(r => getPpmpStatus(r) === 'Draft')
+        .sort((a, b) => String(a.fiscal_year).localeCompare(String(b.fiscal_year)))
+        .forEach(record => {
+            const year = normalizeFiscalYear(record.fiscal_year);
+            if (year) draftYears[year] = true;
+            const count = (typeof getRecordItems === 'function' ? getRecordItems(record) : [record]).length;
+            const kind = getPpmpKindForYear(record.fiscal_year, record);
+            choices.push({
+                value: 'add|' + record.id,
+                text: 'Add entry to PPMP No. ' + (record.ppmp_no || 'N/A') + ' — FY ' + (record.fiscal_year || 'N/A') +
+                    ' (' + (kind ? kind + ', ' : '') + count + (count === 1 ? ' entry' : ' entries') + ')'
+            });
+        });
+
+    // Then the Final / Indicative years that have nothing open yet.
+    getParallelPpmpYears().forEach(lane => {
+        const submitted = records.find(r =>
+            getPpmpStatus(r) === 'For Approval' && normalizeFiscalYear(r.fiscal_year) === lane.year
+        );
+        if (submitted) {
+            blocked.push('FY ' + lane.year + ' (' + lane.kind + '): PPMP No. ' + (submitted.ppmp_no || 'N/A') +
+                ' is submitted for approval, so nothing can be added for that year until it is approved or returned.');
+            return;
+        }
+        if (draftYears[lane.year]) return;
+        choices.push({
+            value: 'new|' + lane.year + '|' + lane.kind,
+            text: 'Start a new ' + lane.kind + ' PPMP — FY ' + lane.year
+        });
+    });
+
+    return { choices: choices, blocked: blocked };
+}
+
 function startNewRequest() {
     const session = typeof getSession === 'function' ? getSession() : null;
     if (session && !session.canRequest) {
@@ -593,37 +750,61 @@ function startNewRequest() {
         return;
     }
 
-    const allRecords = JSON.parse(localStorage.getItem('procurement_records')) || [];
-    const office = session ? session.office : null;
-    const records = office ? allRecords.filter(r => r.end_user === office) : allRecords;
+    const plan = buildNewRequestChoices();
 
-    // 1. If ongoing PPMP is submitted for review, block until higher-ups approve or return it
-    const submittedPpmp = records.find(r => getPpmpStatus(r) === 'For Approval');
-    if (submittedPpmp) {
-        showToast('PPMP No. ' + (submittedPpmp.ppmp_no || 'N/A') + ' is currently submitted for approval. You cannot add entries or start a new PPMP until it is approved or returned.');
+    // Nothing to choose from and nothing waiting: plain new PPMP (the year is typed).
+    if (plan.choices.length === 0 && plan.blocked.length === 0) {
+        openRequestModal();
         return;
     }
 
-    // 2. If there is an existing Draft PPMP, directly open the form to add the next item!
-    const draftRecords = records.filter(r => getPpmpStatus(r) === 'Draft');
-    if (draftRecords.length > 0) {
-        const targetPpmpNo = draftRecords[0].ppmp_no || '1';
-        addEntryToPpmp(targetPpmpNo, draftRecords[0].fiscal_year);
+    // Every open year is waiting on approvers and there is no Draft to add to.
+    if (plan.choices.length === 0 && plan.blocked.length > 0) {
+        showToast(plan.blocked.join(' '));
         return;
     }
 
-    // 3. No active PPMPs exist (all deleted or fully approved) -> Start a brand new PPMP
-    openRequestModal();
+    // Exactly one place this request can go: open it straight away.
+    if (plan.choices.length === 1 && plan.blocked.length === 0) {
+        runNewRequestChoice(plan.choices[0].value);
+        return;
+    }
+
+    openPpmpChoiceModal(plan.choices, plan.blocked);
 }
 
+function runNewRequestChoice(value) {
+    const parts = String(value || '').split('|');
 
-function openPpmpChoiceModal(groups) {
+    if (parts[0] === 'add') {
+        const record = getOfficePpmpRecords().find(r => String(r.id) === parts[1]);
+        if (!record) {
+            showToast('That PPMP could not be found any more.');
+            return;
+        }
+        if (getPpmpStatus(record) !== 'Draft') {
+            showToast('PPMP No. ' + (record.ppmp_no || 'N/A') + ' was submitted in the meantime, so no entries can be added to it.');
+            if (typeof refreshDashboardRecords === 'function') refreshDashboardRecords();
+            return;
+        }
+        addEntryToPpmp(record.ppmp_no || '1', record.fiscal_year);
+    } else if (parts[0] === 'new') {
+        startBrandNewPpmp(parts[1], parts[2]);
+    }
+}
+
+// Re-uses the "Start a new request" choice dialog that index.html and
+// profile.html already contain (same ids), so no markup had to change.
+function openPpmpChoiceModal(choices, blocked) {
+    choices = choices || [];
+    blocked = blocked || [];
+
     const overlay = document.getElementById('ppmpChoiceModalOverlay');
     const select = document.getElementById('pendingPpmpSelect');
 
     if (!overlay || !select) {
-        if (groups && groups.length > 0) {
-            addEntryToPpmp(groups[0].ppmp_no);
+        if (choices.length > 0) {
+            runNewRequestChoice(choices[0].value);
         } else {
             openRequestModal();
         }
@@ -632,19 +813,43 @@ function openPpmpChoiceModal(groups) {
 
     const esc = typeof escapeHtml === 'function' ? escapeHtml : (v => String(v ?? ''));
 
-    select.innerHTML = groups.map(group =>
-        `<option value="${esc(group.ppmp_no)}">PPMP No. ${esc(group.ppmp_no)} — FY ${esc(group.fiscal_year || 'N/A')} (${group.count} ${group.count === 1 ? 'entry' : 'entries'})</option>`
+    select.innerHTML = choices.map(c =>
+        '<option value="' + esc(c.value) + '">' + esc(c.text) + '</option>'
     ).join('');
 
-    // Hide "Start New PPMP"
-    const startNewBtn = overlay.querySelector('.choice-footer .back-btn, button[onclick*="startBrandNewPpmp"]');
-    if (startNewBtn) {
-        startNewBtn.style.display = 'none';
+    const hasChoices = choices.length > 0;
+
+    const group = select.closest('.field-group');
+    if (group) {
+        group.style.display = hasChoices ? '' : 'none';
+        const label = group.querySelector('label');
+        if (label) label.textContent = 'Where should this request go?';
+    }
+
+    const confirmBtn = overlay.querySelector('button[onclick*="confirmAddToSelectedPpmp"]');
+    if (confirmBtn) {
+        confirmBtn.style.display = hasChoices ? '' : 'none';
+        confirmBtn.innerHTML = 'Continue &rarr;';
+    }
+
+    const otherYearBtn = overlay.querySelector('button[onclick*="startBrandNewPpmp"]');
+    if (otherYearBtn) {
+        otherYearBtn.style.display = 'none';   // only the current and next year are open
     }
 
     const desc = overlay.querySelector('.choice-description');
     if (desc) {
-        desc.textContent = "You have an ongoing PPMP in progress. Add this as another entry under it.";
+        desc.textContent = hasChoices
+            ? 'A Final (current year) and an Indicative (next year) PPMP can be worked on at the same time. Each fiscal year keeps one open PPMP, so pick where this request goes.'
+            : 'Every open fiscal year is waiting on approvers.';
+
+        overlay.querySelectorAll('.choice-blocked-note').forEach(n => n.remove());
+        blocked.slice().reverse().forEach(message => {
+            const note = document.createElement('p');
+            note.className = 'choice-blocked-note';
+            note.textContent = message;
+            desc.insertAdjacentElement('afterend', note);
+        });
     }
 
     overlay.classList.remove('hidden');
@@ -663,24 +868,35 @@ function closePpmpChoiceModal() {
 
 function confirmAddToSelectedPpmp() {
     const select = document.getElementById('pendingPpmpSelect');
-    const ppmpNo = select ? select.value : null;
+    const value = select ? select.value : '';
 
     closePpmpChoiceModal();
 
-    if (ppmpNo) {
-        addEntryToPpmp(ppmpNo);
-    } else {
-        const groups = typeof getPendingPpmpGroups === 'function' ? getPendingPpmpGroups() : [];
-        if (groups.length > 0) {
-            addEntryToPpmp(groups[0].ppmp_no);
-        }
-    }
+    if (value) runNewRequestChoice(value);
 }
 
 
-function startBrandNewPpmp() {
+// With a year (and kind) it starts that Final/Indicative PPMP; with no
+// arguments (the "Other fiscal year" button) the year is typed as before.
+function startBrandNewPpmp(year, kind) {
     closePpmpChoiceModal();
     openRequestModal();
+
+    const chosenYear = normalizeFiscalYear(year);
+    if (!chosenYear) return;
+
+    const yearField = document.getElementById('fiscal_year');
+    if (yearField) {
+        yearField.value = chosenYear;   // still editable
+        refreshPpmpNumberForYear();
+    }
+
+    // The Indicative/Final choice is left for the user to pick when the year
+    // is typed by hand; here the lane they clicked already says which it is.
+    const indicativeField = document.getElementById('is_indicative');
+    if (indicativeField && (kind === 'Final' || kind === 'Indicative')) {
+        indicativeField.value = kind;
+    }
 }
 
 
@@ -1020,6 +1236,18 @@ function saveProcurementRequest() {
     }
 
     if (!validateStep('form-step-3')) {
+        return;
+    }
+
+    // One open PPMP per fiscal year: another tab may have started or
+    // submitted a PPMP for this year while the form was open.
+    const yearConflictMessage = getYearPpmpConflictMessage(
+        (document.getElementById('fiscal_year') || {}).value
+    );
+    if (yearConflictMessage) {
+        showStep1();
+        showFieldError('fiscal_year', yearConflictMessage);
+        showToast(yearConflictMessage);
         return;
     }
 
@@ -1526,6 +1754,21 @@ function validateIndividualField(fieldGroup) {
             showFieldError(
                 fieldName,
                 'Fiscal Year must be between 2000 and 2100.'
+            );
+
+            return false;
+        }
+
+        // One open PPMP per office per fiscal year (Final and Indicative
+        // PPMPs may run in parallel, but only in different years).
+        const yearConflictMessage =
+            getYearPpmpConflictMessage(value);
+
+        if (yearConflictMessage) {
+
+            showFieldError(
+                fieldName,
+                yearConflictMessage
             );
 
             return false;

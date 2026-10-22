@@ -516,11 +516,15 @@ function getRecordCriteriaSummary(record) {
 // (index.html/profile.html — open it straight away) or on entries.html,
 // which doesn't have the modal markup, so we stash the target PPMP and
 // hop to index.html, which picks it up on load (see DOMContentLoaded below).
-function requestAddEntryToPpmp(ppmpNo) {
+// PPMP numbers restart every fiscal year (a Final and an Indicative PPMP can
+// both be No. 1), so the fiscal year travels with the number.
+function requestAddEntryToPpmp(ppmpNo, fiscalYear) {
     if (typeof addEntryToPpmp === 'function' && document.getElementById('requestModalOverlay')) {
-        addEntryToPpmp(ppmpNo);
+        addEntryToPpmp(ppmpNo, fiscalYear);
     } else {
         sessionStorage.setItem('add_entry_ppmp', ppmpNo);
+        if (fiscalYear) sessionStorage.setItem('add_entry_year', fiscalYear);
+        else sessionStorage.removeItem('add_entry_year');
         window.location.href = 'index.html';
     }
 }
@@ -3951,9 +3955,11 @@ document.addEventListener('DOMContentLoaded', function () {
             openRequestModal(openRecordId);
         }, 0);
     } else if (addEntryPpmp && typeof addEntryToPpmp === 'function') {
+        const addEntryYear = sessionStorage.getItem('add_entry_year') || undefined;
         sessionStorage.removeItem('add_entry_ppmp');
+        sessionStorage.removeItem('add_entry_year');
         setTimeout(function () {
-            addEntryToPpmp(addEntryPpmp);
+            addEntryToPpmp(addEntryPpmp, addEntryYear);
         }, 0);
     } else if (shouldOpenNewRequest && typeof startNewRequest === 'function') {
         sessionStorage.removeItem('open_new_request');

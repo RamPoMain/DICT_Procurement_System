@@ -77,6 +77,16 @@
     margin-bottom: 18px; 
 }
 
+.choice-blocked-note {
+    margin: -8px 0 14px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    background: var(--db-amber-soft, rgba(245, 158, 11, 0.14));
+    color: var(--db-text, #E7EAF3);
+    font-size: 12.5px;
+    line-height: 1.5;
+}
+
 .choice-modal select {
     background-color: var(--db-card-alt, #0F172A) !important;
     border: 1px solid var(--db-field-border, rgba(255,255,255,0.15)) !important;
