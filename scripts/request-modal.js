@@ -1057,41 +1057,60 @@ function initializeStrategies() {
     });
 }
 
-function checkMatchingProjectLive() {
+/**
+ * Live detection for Two Failed Biddings:
+ * Ensures Mode is strictly 'Negotiated Procurement – Two Failed Biddings'
+ * and Criteria is strictly 'Negotiated', and protects them while filling up the form.
+ */
+function syncFailedBiddingStateLive() {
     const descEl = document.getElementById('project_description');
     const modeEl = document.getElementById('modeOfProcurement');
     const critEl = document.getElementById('bid_evaluation_criteria');
-    if (!descEl) return;
+    if (!descEl || !modeEl) return;
 
     const desc = descEl.value.trim();
-    if (!desc) return;
+    if (!desc) {
+        if (typeof applyNegotiatedModeState === 'function') applyNegotiatedModeState(false);
+        clearFieldError('project_description');
+        clearFieldError('modeOfProcurement');
+        return;
+    }
 
+    const typeEl = document.getElementById('project_type');
+    const type = typeEl ? typeEl.value.trim() : '';
     const db = JSON.parse(localStorage.getItem('procurement_records')) || [];
     const currentRec = currentEditingId ? db.find(r => r.id == currentEditingId) : null;
-    const refInfo = findExistingReferenceInfo(desc, null, currentRec);
+    const refInfo = (typeof findExistingReferenceInfo === 'function')
+        ? findExistingReferenceInfo(desc, type, currentRec)
+        : null;
 
-    if (refInfo) {
-        if (refInfo.competitiveCount >= 2) {
-            ensureNegotiatedTwoFailedOptions();
-            
-            if (modeEl && modeEl.value !== 'Negotiated Procurement – Two Failed Biddings') {
-                modeEl.value = 'Negotiated Procurement – Two Failed Biddings';
-                if (typeof showToast === 'function') {
-                    showToast(`Matched ${refInfo.reference_no} (2 failed biddings). Mode set to Negotiated Procurement – Two Failed Biddings.`);
-                }
-            }
-            if (critEl && critEl.value !== 'Negotiated') {
-                critEl.value = 'Negotiated';
-            }
-            showFieldError('modeOfProcurement', `Matches ${refInfo.reference_no}: 2 failed biddings detected. Mode automatically set to Negotiated Procurement – Two Failed Biddings.`);
-        } else {
-            showFieldError('project_description', `Linked to existing reference: ${refInfo.reference_no} (Attempt #${refInfo.competitiveCount + 1})`);
+    if (refInfo && refInfo.competitiveCount >= 2) {
+        // 1. Lock Mode and Criteria
+        if (typeof applyNegotiatedModeState === 'function') applyNegotiatedModeState(true);
+        modeEl.value = 'Negotiated Procurement – Two Failed Biddings';
+        modeEl.disabled = true;
+
+        if (critEl) {
+            critEl.value = 'Negotiated';
+            critEl.disabled = true;
         }
+
+        // 2. SHOW THE RED WARNING MESSAGE
+        showFieldError(
+            'modeOfProcurement', 
+            `Matches ${refInfo.reference_no}: 2 failed biddings detected. Mode is locked to Negotiated Procurement – Two Failed Biddings.`
+        );
     } else {
-        clearFieldError('project_description');
+        if (typeof applyNegotiatedModeState === 'function') applyNegotiatedModeState(false);
+        clearFieldError('modeOfProcurement');
+
+        if (refInfo) {
+            showFieldError('project_description', `Linked to existing reference: ${refInfo.reference_no} (Attempt #${refInfo.competitiveCount + 1})`);
+        } else {
+            clearFieldError('project_description');
+        }
     }
 }
-
 
 // ============================================================
 // SAVE PROCUREMENT REQUEST
@@ -1424,6 +1443,11 @@ function saveProcurementRequest() {
     // --------------------------------------------------------------------
     // REFERENCE NUMBER & TWO FAILED BIDDINGS LOGIC
     // --------------------------------------------------------------------
+    let refInfo = null;
+    const existingItemForRef = (existingRecord && currentEditingItemId && typeof getRecordItems === 'function')
+        ? getRecordItems(existingRecord).find(it => it.id == currentEditingItemId)
+        : null;
+    
     if (existingItemForRef && existingItemForRef.reference_no) {
         itemPayload.reference_no = existingItemForRef.reference_no;
         if (existingItemForRef.origin_id) itemPayload.origin_id = existingItemForRef.origin_id;
@@ -1580,28 +1604,7 @@ function saveProcurementRequest() {
     }
 }
 
-function checkTwoFailedBiddingsLive() {
-    const descEl = document.getElementById('project_description');
-    const typeEl = document.getElementById('project_type');
-    const modeEl = document.getElementById('modeOfProcurement');
-    if (!descEl || !modeEl) return;
 
-    const desc = descEl.value.trim();
-    const type = typeEl ? typeEl.value.trim() : '';
-    if (!desc) return;
-
-    const db = JSON.parse(localStorage.getItem('procurement_records')) || [];
-    const currentRec = currentEditingId ? db.find(r => r.id == currentEditingId) : null;
-    const refInfo = findExistingReferenceInfo(desc, type, currentRec);
-
-    if (refInfo && refInfo.competitiveCount >= 2) {
-        if (modeEl.value !== 'Negotiated Procurement') {
-            modeEl.value = 'Negotiated Procurement';
-            showToast(`Project matches ${refInfo.reference_no} (2 failed biddings detected). Mode automatically switched to Negotiated Procurement.`);
-        }
-        showFieldError('modeOfProcurement', `Ref: ${refInfo.reference_no} — 2 prior failed biddings. Switched to Negotiated Procurement (RA 12009 Sec. 33).`);
-    }
-}
 
 // ============================================================
 // Approval
@@ -2005,38 +2008,7 @@ function validateIndividualField(fieldGroup) {
     return true;
 }
 
-function ensureNegotiatedTwoFailedOptions() {
-    // 1. Ensure Mode option exists
-    const modeSelect = document.getElementById('modeOfProcurement');
-    if (modeSelect) {
-        const modeVal = 'Negotiated Procurement – Two Failed Biddings';
-        const exists = Array.from(modeSelect.options).some(o => o.value === modeVal);
-        if (!exists) {
-            const opt = document.createElement('option');
-            opt.value = modeVal;
-            opt.textContent = modeVal;
-            const altGroup = Array.from(modeSelect.querySelectorAll('optgroup')).find(g => (g.label || '').toLowerCase().includes('alternative'));
-            if (altGroup) {
-                altGroup.appendChild(opt);
-            } else {
-                modeSelect.appendChild(opt);
-            }
-        }
-    }
 
-    // 2. Ensure Criteria option exists
-    const critSelect = document.getElementById('bid_evaluation_criteria');
-    if (critSelect) {
-        const critVal = 'Negotiated';
-        const exists = Array.from(critSelect.options).some(o => o.value === critVal);
-        if (!exists) {
-            const opt = document.createElement('option');
-            opt.value = critVal;
-            opt.textContent = critVal;
-            critSelect.appendChild(opt);
-        }
-    }
-}
 
 // ============================================================
 // DYNAMIC N/A OPTIONS INJECTION
@@ -2068,6 +2040,61 @@ function ensureStrategyNaOption() {
     }
 }
 
+function applyNegotiatedModeState(isFailedBidding) {
+    const modeSelect = document.getElementById('modeOfProcurement');
+    const critSelect = document.getElementById('bid_evaluation_criteria');
+    if (!modeSelect) return;
+
+    const specialMode = 'Negotiated Procurement – Two Failed Biddings';
+    const standardMode = 'Negotiated Procurement';
+
+    // 1. Ensure standard "Negotiated Procurement" exists
+    let standardOpt = Array.from(modeSelect.options).find(o => o.value === standardMode);
+    if (!standardOpt) {
+        standardOpt = document.createElement('option');
+        standardOpt.value = standardMode;
+        standardOpt.textContent = standardMode;
+        const altGroup = Array.from(modeSelect.querySelectorAll('optgroup')).find(g => (g.label || '').toLowerCase().includes('alternative'));
+        if (altGroup) altGroup.appendChild(standardOpt);
+        else modeSelect.appendChild(standardOpt);
+    }
+
+    // 2. Manage the Special "Two Failed Biddings" option
+    let specialOpt = Array.from(modeSelect.options).find(o => o.value === specialMode);
+
+    if (isFailedBidding) {
+        if (!specialOpt) {
+            specialOpt = document.createElement('option');
+            specialOpt.value = specialMode;
+            specialOpt.textContent = specialMode;
+            modeSelect.appendChild(specialOpt);
+        }
+        modeSelect.value = specialMode;
+        modeSelect.disabled = true;
+
+        if (critSelect) {
+            let negCritOpt = Array.from(critSelect.options).find(o => o.value === 'Negotiated');
+            if (!negCritOpt) {
+                negCritOpt = document.createElement('option');
+                negCritOpt.value = 'Negotiated';
+                negCritOpt.textContent = 'Negotiated';
+                critSelect.appendChild(negCritOpt);
+            }
+            critSelect.value = 'Negotiated';
+            critSelect.disabled = true;
+        }
+    } else {
+        // Do not touch mode if it's already locked as a failed bidding entry
+        if (modeSelect.value === specialMode) return;
+
+        if (specialOpt) specialOpt.remove();
+        modeSelect.disabled = false;
+        if (critSelect && critSelect.value !== 'Negotiated') {
+            critSelect.disabled = false;
+        }
+    }
+}
+
 // ============================================================
 // LIVE MODE VS. PROJECT TYPE & GENERAL DESCRIPTION VALIDATION
 // Runs on Step 1 without waiting for Budget
@@ -2083,6 +2110,10 @@ function validateModeTypeMatch() {
     if (!modeValue) {
         clearFieldError('modeOfProcurement');
         return true;
+    }
+
+    if (modeSelect && modeSelect.value === 'Negotiated Procurement – Two Failed Biddings') {
+        return true; // Keep the red warning intact
     }
 
     const projectType = typeSelect ? typeSelect.value.trim() : '';
@@ -2195,15 +2226,6 @@ const PROCUREMENT_MODE_RULES = {
         legalBasis: 'RA 12009 Sec. 26',
         bracketLabel: 'Complex or innovative procurement'
     },
-    'Negotiated Procurement – Two Failed Biddings': {
-        mode: 'Negotiated Procurement – Two Failed Biddings',
-        category: 'Alternative Mode',
-        minBudget: 0.01,
-        maxBudget: Infinity,
-        allowedTypes: ['Goods', 'Infrastructure', 'Consulting Services'],
-        legalBasis: 'RA 12009 Sec. 33',
-        bracketLabel: 'Two failed biddings (Sec. 33)'
-    },
     'Negotiated Procurement': {
         mode: 'Negotiated Procurement',
         category: 'Alternative Mode',
@@ -2212,7 +2234,16 @@ const PROCUREMENT_MODE_RULES = {
         allowedTypes: ['Goods', 'Infrastructure', 'Consulting Services'],
         legalBasis: 'RA 12009 Sec. 33',
         bracketLabel: 'Authorized statutory grounds'
-    }
+    },
+    'Negotiated Procurement - Two Failed Biddings': {
+        mode: 'Negotiated Procurement - Two Failed Biddings',
+        category: 'Alternative Mode',
+        minBudget: 0.01,
+        maxBudget: Infinity,
+        allowedTypes: ['Goods', 'Infrastructure', 'Consulting Services'],
+        legalBasis: 'RA 12009 Sec. 33',
+        bracketLabel: 'Two failed biddings (Sec. 33)'
+    },
 };
 
 // Each bracket applies BELOW its `below` limit, so the limit itself belongs to
@@ -2330,6 +2361,11 @@ function validateModeBudgetMatch() {
 
     if (!modeValue || !budgetRaw) return true;
 
+    if (modeSelect && modeSelect.value === 'Negotiated Procurement – Two Failed Biddings') {
+        clearFieldError('budget');
+        return true; // Keep the red warning intact
+    }
+    
     const budgetNumber = parseFloat(budgetRaw.replace(/,/g, ''));
     if (isNaN(budgetNumber) || budgetNumber <= 0) return true;
 
@@ -2637,54 +2673,32 @@ function validateAndProceed(
 function initRequiredFieldValidation() {
 
     // Input event
-    document.addEventListener(
-        'input',
-        function (event) {
+    // Input event
+    document.addEventListener('input', function (event) {
+        const group = event.target.closest('.field-group[data-field]');
+        if (!group) return;
 
-            const group =
-                event.target.closest(
-                    '.field-group[data-field]'
-                );
+        const fieldName = group.dataset.field;
+        const fieldValid = validateIndividualField(group);
 
-
-            if (!group) return;
-
-
-            const fieldName =
-                group.dataset.field;
-
-
-            // Don't clear errors blindly.
-            // Re-check the field so specific errors remain.
-            const fieldValid =
-                validateIndividualField(
-                    group
-                );
-
-            // Only re-run the cross-check once the field's own
-            // validation is satisfied, so a mismatch message doesn't
-            // override a more fundamental "required"/format error.
-            if (fieldValid &&
-                (
-                    fieldName === 'modeOfProcurement' ||
-                    fieldName === 'project_type' ||
-                    fieldName === 'project_description' ||
-                    fieldName === 'budget'
-                )
-            ) {
-                checkTwoFailedBiddingsLive();
-                validateModeTypeMatch();
-                validateModeBudgetMatch();
-            }
-            if (fieldValid && (fieldName === 'end_date' || fieldName === 'delivery_period')) {
-            validateDeliveryDateMatch();
-            }
-
-            if (fieldName === 'project_description') {
-                checkMatchingProjectLive();
-            }
+        if (fieldValid &&
+            (
+                fieldName === 'modeOfProcurement' ||
+                fieldName === 'project_type' ||
+                fieldName === 'project_description' ||
+                fieldName === 'budget'
+            )
+        ) {
+          
+            validateModeTypeMatch();
+            validateModeBudgetMatch();
+            syncFailedBiddingStateLive(); // <--- SINGLE UNIFIED CALL
         }
-    );
+
+        if (fieldValid && (fieldName === 'end_date' || fieldName === 'delivery_period')) {
+            validateDeliveryDateMatch();
+        }
+    });
 
 
     // Change event
@@ -4367,6 +4381,7 @@ function disableModalFields() {
 }
 
 function enableModalFields() {
+    // 1. Unlock all standard form fields
     document.querySelectorAll('#requestModalOverlay input, #requestModalOverlay select, #requestModalOverlay textarea')
         .forEach(el => el.disabled = false);
     
@@ -4374,10 +4389,8 @@ function enableModalFields() {
     document.getElementById('strategiesTrigger').style.pointerEvents = 'auto';
 
     document.getElementById('ppmp_no').readOnly = true;
-    document.getElementById('fiscal_year').readOnly = false; // typed manually; addEntryToPpmp() re-locks it for existing PPMPs
+    document.getElementById('fiscal_year').readOnly = false;
 
-    // End-User/Implementing Unit is always the signed-in office — never
-    // free-typed, so filtering in getRecords() stays an exact match.
     const endUserField = document.getElementById('end_user');
     if (endUserField) {
         const session = typeof getSession === 'function' ? getSession() : null;
@@ -4386,7 +4399,30 @@ function enableModalFields() {
         }
         endUserField.readOnly = true;
     }
+
+    // 2. Read values currently inside the form to determine if this is a failed-bidding item
+    const modeEl = document.getElementById('modeOfProcurement');
+    const descEl = document.getElementById('project_description');
+    const typeEl = document.getElementById('project_type');
+    const currentMode = modeEl ? modeEl.value : '';
+    const desc = descEl ? descEl.value.trim() : '';
+    const type = typeEl ? typeEl.value.trim() : '';
+    const db = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const currentRec = currentEditingId ? db.find(r => r.id == currentEditingId) : null;
+    const refInfo = (typeof findExistingReferenceInfo === 'function' && desc)
+        ? findExistingReferenceInfo(desc, type, currentRec)
+        : null;
+
+    // DEFINING isFailedBidding: True if mode is already set to failed biddings OR if 2 failed biddings are on record
+    const isFailedBidding = currentMode === 'Negotiated Procurement – Two Failed Biddings' || 
+                            (refInfo && refInfo.competitiveCount >= 2);
+
+    // Apply the lock if it's a failed bidding item; leave unlocked if it's a regular entry
+    if (typeof applyNegotiatedModeState === 'function') {
+        applyNegotiatedModeState(isFailedBidding);
+    }
 }
+
 
 
 function closeRequestModal() {

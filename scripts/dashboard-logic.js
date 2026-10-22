@@ -754,9 +754,16 @@ const PREVIEW_MODE_GROUPS = [
     { label: 'Alternative Modes', options: [
         'Limited Source Bidding', 'Direct Contracting', 'Repeat Order', 'Shopping',
         'Small Value Procurement (SVP)', 'Direct Acquisition', 'Competitive Dialogue',
-        'Negotiated Procurement', 'Negotiated Procurement', 'Negotiated Procurement - Two Failed Biddings'
+        'Negotiated Procurement' // Standard option for regular entries
     ] }
 ];
+
+function getPreviewModeValues() {
+    const out = [];
+    PREVIEW_MODE_GROUPS.forEach(group => (group.options || []).forEach(opt => out.push(opt)));
+    out.push('Negotiated Procurement - Two Failed Biddings'); // Validated internally
+    return out;
+}
 
 const PREVIEW_CRITERIA_OPTIONS = [
     'Lowest Calculated Responsive Bid (LCRB)',
@@ -993,9 +1000,31 @@ function buildEditableItemRow(record, item, showRef) {
     const rid = Number(record.id);
     const iid = item.id;
 
+    // DEFINING isFailedBidding for this table row:
+    const isFailedBidding = item.mode === 'Negotiated Procurement – Two Failed Biddings' ||
+        (item.remarks && String(item.remarks).includes('Two Failed Biddings'));
+
     const modeOptionsHtml = PREVIEW_MODE_GROUPS.map(group =>
         `<optgroup label="${escapeHtml(group.label)}">${selectOptionsHtml(group.options, item.mode)}</optgroup>`
     ).join('');
+
+    // If it's a failed-bidding row, render a LOCKED/DISABLED input instead of a dropdown:
+    const modeHtml = isFailedBidding
+        ? `<input type="text" class="ep-input" value="Negotiated Procurement – Two Failed Biddings" readonly disabled style="background:#f3f4f6; cursor:not-allowed; font-weight:600; color:#374151;" title="Locked: Automated under RA 12009 Sec. 33 (Two Failed Biddings)">
+           <input type="hidden" data-record-id="${rid}" data-item-id="${iid}" data-field="mode" value="Negotiated Procurement – Two Failed Biddings">`
+        : `<select class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="mode" onchange="onPreviewFieldInput(this)">
+               <option value=""${!item.mode ? ' selected' : ''}>Select mode...</option>
+               ${modeOptionsHtml}
+           </select>`;
+
+    // If it's a failed-bidding row, render a LOCKED "Negotiated" criteria input:
+    const critHtml = isFailedBidding
+        ? `<input type="text" class="ep-input" value="Negotiated" readonly disabled style="background:#f3f4f6; cursor:not-allowed; font-weight:600; color:#374151;" title="Locked: Negotiated criteria">
+           <input type="hidden" data-record-id="${rid}" data-item-id="${iid}" data-field="bid_evaluation_criteria" value="Negotiated">`
+        : `<select class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="bid_evaluation_criteria" onchange="onPreviewFieldInput(this)">
+               <option value=""${!item.bid_evaluation_criteria ? ' selected' : ''}>Select...</option>
+               ${selectOptionsHtml(PREVIEW_CRITERIA_OPTIONS, item.bid_evaluation_criteria)}
+           </select>`;
 
     const strategiesHtml = PREVIEW_STRATEGY_OPTIONS.map(opt => {
         const isChecked = Array.isArray(item.strategies) && item.strategies.includes(opt);
@@ -1028,11 +1057,8 @@ function buildEditableItemRow(record, item, showRef) {
             <!-- Col 3: Quantity & Size -->
             <td><textarea class="ep-input" rows="2" data-record-id="${rid}" data-item-id="${iid}" data-field="quantity_size" oninput="onPreviewFieldInput(this)" placeholder="Quantity and size...">${escapeHtml(item.quantity_size || '')}</textarea></td>
             
-            <!-- Col 4: Mode of Procurement -->
-            <td><select class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="mode" onchange="onPreviewFieldInput(this)">
-                <option value=""${!item.mode ? ' selected' : ''}>Select mode...</option>
-                ${modeOptionsHtml}
-            </select></td>
+            <!-- Col 4: Mode of Procurement (Locked if failed bidding) -->
+            <td>${modeHtml}</td>
             
             <!-- Col 5: Pre-Procurement -->
             <td><select class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="pre_procurement" onchange="onPreviewFieldInput(this)">
@@ -1040,11 +1066,8 @@ function buildEditableItemRow(record, item, showRef) {
                 ${selectOptionsHtml(['No', 'Yes'], item.pre_procurement)}
             </select></td>
             
-            <!-- Col 6: Criteria for Bid Evaluation -->
-            <td><select class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="bid_evaluation_criteria" onchange="onPreviewFieldInput(this)">
-                <option value=""${!item.bid_evaluation_criteria ? ' selected' : ''}>Select...</option>
-                ${selectOptionsHtml(PREVIEW_CRITERIA_OPTIONS, item.bid_evaluation_criteria)}
-            </select></td>
+            <!-- Col 6: Criteria for Bid Evaluation (Locked if failed bidding) -->
+            <td>${critHtml}</td>
             
             <!-- Col 7: Start Date -->
             <td><input type="date" class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="start_date" min="2000-01-01" max="2100-12-31" value="${escapeHtml(item.start_date || '')}" oninput="onPreviewFieldInput(this)"></td>
@@ -1075,11 +1098,10 @@ function buildEditableItemRow(record, item, showRef) {
                 </div>
             </td>
             
-            <!-- Col 14: General Requirements / Miscellaneous / Common Supplies and Equipment -->
+            <!-- Col 14: General Requirements -->
             <td><select class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="general_requirements" onchange="onPreviewFieldInput(this)">
                 <option value=""${!item.general_requirements ? ' selected' : ''}>None / Not applicable</option>
                 ${selectOptionsHtml(PREVIEW_GENERAL_REQUIREMENT_OPTIONS, item.general_requirements)}
-                ${(item.general_requirements && PREVIEW_GENERAL_REQUIREMENT_OPTIONS.indexOf(item.general_requirements) === -1) ? selectOptionsHtml([item.general_requirements], item.general_requirements) : ''}
             </select></td>
             
             <!-- Col 15: Remarks -->
@@ -2371,6 +2393,10 @@ const PREVIEW_FALLBACK_BRACKETS = [
 function getPreviewModeValues() {
     const out = [];
     PREVIEW_MODE_GROUPS.forEach(group => (group.options || []).forEach(opt => out.push(opt)));
+    
+    // Add the automated failed bidding mode (with both dash types so it always validates)
+    out.push('Negotiated Procurement – Two Failed Biddings');
+    out.push('Negotiated Procurement - Two Failed Biddings');
     return out;
 }
 
@@ -2401,8 +2427,15 @@ function validatePreviewItem(item) {
     if (!text('quantity_size')) errors.quantity_size = 'Quantity and size is required.';
     else if (text('quantity_size').length < 3) errors.quantity_size = 'Please provide a more detailed quantity or size.';
 
-    if (!text('mode')) errors.mode = 'Select a mode of procurement.';
-    else if (getPreviewModeValues().indexOf(text('mode')) === -1) errors.mode = 'Choose a mode from the list.';
+    const rawMode = text('mode');
+    const normMode = rawMode.replace(/[–—]/g, '-').trim();
+    const validModes = getPreviewModeValues().map(m => m.replace(/[–—]/g, '-').trim());
+
+    if (!rawMode) {
+        errors.mode = 'Select a mode of procurement.';
+    } else if (validModes.indexOf(normMode) === -1) {
+        errors.mode = 'Choose a mode from the list.';
+    }
 
     if (!text('pre_procurement')) errors.pre_procurement = 'Select Yes or No.';
     else if (['Yes', 'No'].indexOf(text('pre_procurement')) === -1) errors.pre_procurement = 'Choose Yes or No.';
@@ -2434,6 +2467,28 @@ function validatePreviewItem(item) {
     const projType = text('project_type');
     const budgetRaw = text('budget');
     const budgetNumber = parsePreviewBudget(budgetRaw);
+
+    // Check if this item is an automated failed-bidding item
+    const isFailedBiddingItem = 
+        modeVal.toLowerCase().includes('failed biddings') ||
+        String(item.remarks || '').toLowerCase().includes('two failed biddings') ||
+        (item.mode && String(item.mode).toLowerCase().includes('failed biddings'));
+
+    if (isFailedBiddingItem) {
+        item.bid_evaluation_criteria = 'Negotiated';
+    } else if (!text('bid_evaluation_criteria')) {
+        errors.bid_evaluation_criteria = 'Select the criteria for bid evaluation.';
+    } else {
+        const cleanCrit = text('bid_evaluation_criteria').toLowerCase().trim();
+        const validCrit = (typeof PREVIEW_CRITERIA_OPTIONS !== 'undefined' ? PREVIEW_CRITERIA_OPTIONS : []).map(c => 
+            String(c).toLowerCase().trim()
+        );
+
+        if (validCrit.indexOf(cleanCrit) === -1 && cleanCrit !== 'negotiated') {
+            errors.bid_evaluation_criteria = 'Choose a criteria from the list.';
+        }
+    }
+
 
     if (modeVal && !isNaN(budgetNumber) && budgetNumber > 0) {
         const rules = (typeof PROCUREMENT_MODE_RULES !== 'undefined') ? PROCUREMENT_MODE_RULES : null;
