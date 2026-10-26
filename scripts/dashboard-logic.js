@@ -1013,7 +1013,7 @@ function selectOptionsHtml(options, current) {
 // Small read-only tag with an entry's reference number (Entries section only).
 function renderEntryRefBadge(item) {
     if (!item || !item.reference_no) return '';
-    return '<span class="ep-ref" title="Entry reference number">' + escapeHtml(item.reference_no) + '</span>';
+    return '<span class="ep-ref" title="Entry reference number" style="display:inline-block; font-size:10.5px; font-weight:700; padding:2px 6px; border-radius:4px; background:#e0f2fe; color:#0369a1; margin-bottom:4px; letter-spacing:0.3px;">' + escapeHtml(item.reference_no) + '</span><br>';
 }
 
 function buildEditableItemRow(record, item, showRef) {
@@ -1062,8 +1062,16 @@ function buildEditableItemRow(record, item, showRef) {
 
     return `
         <tr data-preview-item-row="${iid}">
-            <!-- Col 1: Description -->
-            <td><textarea class="ep-input" rows="2" data-record-id="${rid}" data-item-id="${iid}" data-field="project_description" oninput="onPreviewFieldInput(this)" placeholder="Describe the project...">${escapeHtml(item.project_description || '')}</textarea></td>
+            <!-- Col 1: Reference Badge ON TOP + Editable Textarea BELOW -->
+            <td>
+                ${showRef ? renderEntryRefBadge(item) : ''}
+                <textarea class="ep-input" rows="2" 
+                    data-record-id="${rid}" 
+                    data-item-id="${iid}" 
+                    data-field="project_description" 
+                    oninput="onPreviewFieldInput(this)" 
+                    placeholder="Describe the project...">${escapeHtml(item.project_description || item.description || item.project_title || '')}</textarea>
+            </td>
             
             <!-- Col 2: Project Type -->
             <td><select class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="project_type" onchange="onPreviewFieldInput(this)">
@@ -1344,7 +1352,12 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
 
         return `
             <tr class="ep-item-row" ${itemFilterAttrs(item, showCS)}>
-                <td>${escapeHtml(item.project_description || '')}</td>
+                <td>
+                    ${showRef ? renderEntryRefBadge(item) : ''}
+                    <div style="font-weight: 500; color: inherit; line-height: 1.4;">
+                        ${escapeHtml(item.project_description || item.description || item.project_title || '')}
+                    </div>
+                </td>
                 <td>${escapeHtml(item.project_type || '')}</td>
                 <td>${escapeHtml(item.quantity_size || '')}</td>
                 <td>${escapeHtml(item.mode || '')}</td>
