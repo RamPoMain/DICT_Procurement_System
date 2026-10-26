@@ -1371,6 +1371,11 @@ function saveProcurementRequest() {
                 'project_description'
             ).value,
 
+        object_name:
+            document.getElementById('object_name')
+                ? document.getElementById('object_name').value.trim()
+                : '',
+
         project_type:
             document.getElementById(
                 'project_type'
@@ -1402,6 +1407,16 @@ function saveProcurementRequest() {
             document.getElementById(
                 'start_date'
             ).value,
+
+        bid_opening_date:
+            document.getElementById('bid_opening_date')
+                ? document.getElementById('bid_opening_date').value
+                : '',
+
+        notice_of_award_date:
+            document.getElementById('notice_of_award_date')
+                ? document.getElementById('notice_of_award_date').value
+                : '',
 
         end_date:
             document.getElementById(
@@ -2000,6 +2015,21 @@ function validateIndividualField(fieldGroup) {
 
 
     // --------------------------------------------------------
+    // Object (typed by hand)
+    // --------------------------------------------------------
+
+    if (fieldName === 'object_name' && !/^\d+$/.test(value)) {
+
+        showFieldError(
+            fieldName,
+            value.length === 0 ? 'Please enter the object code.' : 'Object Code must be numbers only.'
+        );
+
+        return false;
+    }
+
+
+    // --------------------------------------------------------
     // Everything passed
     // --------------------------------------------------------
 
@@ -2419,6 +2449,45 @@ function validateModeBudgetMatch() {
 // DATE VALIDATION
 // ============================================================
 
+// The four procurement milestones, in the order they must happen:
+// Advertisement/Posting of IB/REI (start) -> Submission/Opening of Bids ->
+// Notice of Award -> Contract Signing (end). [field name, label at the start
+// of a sentence, label inside a sentence]
+const MILESTONE_FIELDS = [
+    ['start_date',           'Advertisement/posting date', 'the advertisement/posting date'],
+    ['bid_opening_date',     'Submission/opening of bids', 'the submission/opening of bids'],
+    ['notice_of_award_date', 'Notice of award',            'the notice of award'],
+    ['end_date',             'Contract signing',           'the contract signing']
+];
+
+function dateInputOf(fieldName) {
+    const group = getFieldGroup(fieldName);
+    return group ? group.querySelector('input') : null;
+}
+
+// Each milestone may not fall before the nearest earlier one that has a date.
+// Blank dates are left to the "required" check. Returns true when the order is fine.
+function checkMilestoneOrder() {
+    let valid = true;
+    let prev = null;
+
+    MILESTONE_FIELDS.forEach(function (m) {
+        const input = dateInputOf(m[0]);
+        const value = input ? input.value : '';
+        if (!value) return;
+
+        if (prev && new Date(value) < new Date(prev.value)) {
+            showFieldError(m[0], m[1] + ' cannot be earlier than ' + prev.ref + '.');
+            valid = false;
+        } else if (prev) {
+            clearFieldError(m[0]);
+        }
+        prev = { value: value, ref: m[2] };
+    });
+
+    return valid;
+}
+
 function validateDates(container) {
 
     const startGroup = getFieldGroup('start_date');
@@ -2429,59 +2498,51 @@ function validateDates(container) {
         return true;
     }
 
-    const startInput = startGroup.querySelector('input');
-    const endInput = endGroup.querySelector('input');
-    const deliveryInput = deliveryGroup.querySelector('input');
+    const endInput = dateInputOf('end_date');
+    const deliveryInput = dateInputOf('delivery_period');
 
-    if (!startInput || !endInput || !deliveryInput) {
+    if (!dateInputOf('start_date') || !endInput || !deliveryInput) {
         return true;
     }
 
-    const startDate = startInput.value;
-    const endDate = endInput.value;
-    const deliveryDate = deliveryInput.value;
-
     let valid = true;
 
-    // Start date check
-    if (!startDate) {
-        showFieldError('start_date', 'Please select a start date.');
-        valid = false;
-    } else {
-        clearFieldError('start_date');
-    }
+    // Every milestone date is required.
+    const requiredMessages = {
+        start_date: 'Please select the advertisement/posting date.',
+        bid_opening_date: 'Please select the submission/opening of bids date.',
+        notice_of_award_date: 'Please select the notice of award date.',
+        end_date: 'Please select the contract signing date.'
+    };
 
-    // End date check
-    if (!endDate) {
-        showFieldError('end_date', 'Please select an end date.');
-        valid = false;
-    } else {
-        clearFieldError('end_date');
-    }
+    MILESTONE_FIELDS.forEach(function (m) {
+        const input = dateInputOf(m[0]);
+        if (!input) return;                       // field not on this page
+        if (!input.value) {
+            showFieldError(m[0], requiredMessages[m[0]]);
+            valid = false;
+        } else {
+            clearFieldError(m[0]);
+        }
+    });
 
     // Delivery period check
-    if (!deliveryDate) {
+    if (!deliveryInput.value) {
         showFieldError('delivery_period', 'Please specify the expected delivery/implementation period.');
         valid = false;
     } else {
         clearFieldError('delivery_period');
     }
 
-    // Compare Start Date vs. End Date
-    if (startDate && endDate) {
-        const start = new Date(startDate);
-        const end = new Date(endDate);
-
-        if (end < start) {
-            showFieldError('end_date', 'End date cannot be earlier than the start date.');
-            valid = false;
-        }
+    // Start -> Bids -> Notice of Award -> Contract Signing must be in order
+    if (!checkMilestoneOrder()) {
+        valid = false;
     }
 
-    // Compare End Date vs. Expected Delivery Period
-    if (endDate && deliveryDate) {
-        const end = new Date(endDate);
-        const delivery = new Date(deliveryDate);
+    // Compare Contract Signing (end) vs. Expected Delivery Period
+    if (endInput.value && deliveryInput.value) {
+        const end = new Date(endInput.value);
+        const delivery = new Date(deliveryInput.value);
 
         if (delivery <= end) {
             showFieldError(
@@ -2698,6 +2759,9 @@ function initRequiredFieldValidation() {
         if (fieldValid && (fieldName === 'end_date' || fieldName === 'delivery_period')) {
             validateDeliveryDateMatch();
         }
+        if (fieldValid && MILESTONE_FIELDS.some(function (m) { return m[0] === fieldName; })) {
+            checkMilestoneOrder();
+        }
     });
 
 
@@ -2737,6 +2801,9 @@ function initRequiredFieldValidation() {
             }
             if (fieldValid && (fieldName === 'end_date' || fieldName === 'delivery_period')) {
                 validateDeliveryDateMatch();
+            }
+            if (fieldValid && MILESTONE_FIELDS.some(function (m) { return m[0] === fieldName; })) {
+                checkMilestoneOrder();
             }
         }
     );
@@ -3821,12 +3888,15 @@ function loadRecordIntoModal(id, itemIndex = 0) {
         'end_user': data.end_user,
         'fiscal_year': data.fiscal_year,
         'project_description': item.project_description,
+        'object_name': item.object_name,
         'project_type': item.project_type,
         'modeOfProcurement': item.mode,
         'pre_procurement': item.pre_procurement,
         'bid_evaluation_criteria': item.bid_evaluation_criteria,
         'quantity_size': item.quantity_size,
         'start_date': item.start_date,
+        'bid_opening_date': item.bid_opening_date,
+        'notice_of_award_date': item.notice_of_award_date,
         'end_date': item.end_date,
         'delivery_period': item.delivery_period,
         'fund_source': item.fund_source,
@@ -3875,6 +3945,11 @@ function loadRecordIntoModal(id, itemIndex = 0) {
     
     // Disable all inputs so it's "Read Only"
     disableModalFields();
+
+    // Object is entry-stage only: it is not shown once the PPMP has been
+    // submitted for approval (the approvers never see it).
+    const objectGroup = getFieldGroup('object_name');
+    if (objectGroup) objectGroup.classList.toggle('hidden', getPpmpStatus(data) !== 'Draft');
 
     const session = typeof getSession === 'function' ? getSession() : null;
     const finishBtn = document.getElementById('finishBtn');
@@ -4381,6 +4456,10 @@ function disableModalFields() {
 }
 
 function enableModalFields() {
+    // Object is visible whenever the form is being filled in or edited.
+    const objectGroup = getFieldGroup('object_name');
+    if (objectGroup) objectGroup.classList.remove('hidden');
+
     // 1. Unlock all standard form fields
     document.querySelectorAll('#requestModalOverlay input, #requestModalOverlay select, #requestModalOverlay textarea')
         .forEach(el => el.disabled = false);
@@ -4602,6 +4681,7 @@ document.addEventListener('DOMContentLoaded', function () {
         initFileUpload();
         restrictNumberOnly('ppmp_no');
         restrictNumberOnly('fiscal_year');
+        restrictNumberOnly('object_name');
         restrictDecimalNumber('budget');
 
         // PPMP No. follows the Fiscal Year: typing a year re-numbers the PPMP.

@@ -241,12 +241,15 @@ function getRecordItems(record) {
     return [{
         id: record.id,
         project_description: record.project_description,
+        object_name: record.object_name || '',
         project_type: record.project_type,
         mode: record.mode,
         pre_procurement: record.pre_procurement,
         bid_evaluation_criteria: record.bid_evaluation_criteria || '',
         quantity_size: record.quantity_size,
         start_date: record.start_date,
+        bid_opening_date: record.bid_opening_date || '',
+        notice_of_award_date: record.notice_of_award_date || '',
         end_date: record.end_date,
         delivery_period: record.delivery_period,
         fund_source: record.fund_source,
@@ -786,8 +789,9 @@ function blankPreviewItem() {
     previewItemIdSeq += 1;
     return {
         id: Date.now() + previewItemIdSeq,
-        project_description: '', project_type: '', quantity_size: '', mode: '',
-        pre_procurement: '', bid_evaluation_criteria: '', start_date: '', end_date: '',
+        project_description: '', object_name: '', project_type: '', quantity_size: '', mode: '',
+        pre_procurement: '', bid_evaluation_criteria: '', start_date: '',
+        bid_opening_date: '', notice_of_award_date: '', end_date: '',
         delivery_period: '', fund_source: '', budget: '', strategies: [],
         supporting_documents: [], general_requirements: '', remarks: ''
     };
@@ -1046,8 +1050,14 @@ function buildEditableItemRow(record, item, showRef) {
     return `
         <tr data-preview-item-row="${iid}">
             <!-- Col 1: Description -->
-            <td>${showRef ? renderEntryRefBadge(item) : ''}<textarea class="ep-input" rows="2" data-record-id="${rid}" data-item-id="${iid}" data-field="project_description" oninput="onPreviewFieldInput(this)" placeholder="Describe the project...">${escapeHtml(item.project_description || '')}</textarea></td>
+            <td><textarea class="ep-input" rows="2" data-record-id="${rid}" data-item-id="${iid}" data-field="project_description" oninput="onPreviewFieldInput(this)" placeholder="Describe the project...">${escapeHtml(item.project_description || '')}</textarea></td>
             
+            <!-- PAP Code: the entry's reference number (assigned automatically on first save, not editable) -->
+            <td class="ep-cs-col">${item.reference_no ? renderEntryRefBadge(item) : '<span class="ep-none">Assigned on save</span>'}</td>
+
+            <!-- Object: typed by hand -->
+            <td class="ep-cs-col"><input type="text" class="ep-input" inputmode="numeric" maxlength="10" data-record-id="${rid}" data-item-id="${iid}" data-field="object_name" value="${escapeHtml(item.object_name || '')}" oninput="onPreviewFieldInput(this)" placeholder="Object Code"></td>
+
             <!-- Col 2: Project Type -->
             <td><select class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="project_type" onchange="onPreviewFieldInput(this)">
                 <option value=""${!item.project_type ? ' selected' : ''}>Select...</option>
@@ -1072,8 +1082,14 @@ function buildEditableItemRow(record, item, showRef) {
             <!-- Col 7: Start Date -->
             <td><input type="date" class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="start_date" min="2000-01-01" max="2100-12-31" value="${escapeHtml(item.start_date || '')}" oninput="onPreviewFieldInput(this)"></td>
             
-            <!-- Col 8: End Date -->
-            <td><input type="date" class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="end_date" min="${escapeHtml(item.start_date || '2000-01-01')}" max="2100-12-31" value="${escapeHtml(item.end_date || '')}" oninput="onPreviewFieldInput(this)"></td>
+            <!-- Submission/Opening of Bids -->
+            <td><input type="date" class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="bid_opening_date" min="${escapeHtml(previewDateFloor(item, 'bid_opening_date'))}" max="2100-12-31" value="${escapeHtml(item.bid_opening_date || '')}" oninput="onPreviewFieldInput(this)"></td>
+
+            <!-- Notice of Award -->
+            <td><input type="date" class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="notice_of_award_date" min="${escapeHtml(previewDateFloor(item, 'notice_of_award_date'))}" max="2100-12-31" value="${escapeHtml(item.notice_of_award_date || '')}" oninput="onPreviewFieldInput(this)"></td>
+
+            <!-- Col 8: End Date (Contract Signing) -->
+            <td><input type="date" class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="end_date" min="${escapeHtml(previewDateFloor(item, 'end_date'))}" max="2100-12-31" value="${escapeHtml(item.end_date || '')}" oninput="onPreviewFieldInput(this)"></td>
             
             <!-- Col 9: Delivery Period -->
             <td><input type="date" class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="delivery_period" min="${escapeHtml(item.end_date ? previewNextDay(item.end_date) : '2000-01-01')}" max="2100-12-31" value="${escapeHtml(item.delivery_period || '')}" oninput="onPreviewFieldInput(this)"></td>
@@ -1287,13 +1303,17 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
 
         return `
             <tr class="ep-item-row" ${itemFilterAttrs(item, showCS)}>
-                <td>${showRef ? renderEntryRefBadge(item) : ''}${escapeHtml(item.project_description || '')}</td>
+                <td>${escapeHtml(item.project_description || '')}</td>
+                <td class="ep-cs-col">${showCS ? renderEntryRefBadge(item) : ''}</td>
+                <td class="ep-cs-col">${showCS ? escapeHtml(item.object_name || '') : ''}</td>
                 <td>${escapeHtml(item.project_type || '')}</td>
                 <td>${escapeHtml(item.quantity_size || '')}</td>
                 <td>${escapeHtml(item.mode || '')}</td>
                 <td>${escapeHtml(item.pre_procurement || '')}</td>
                 <td class="ep-cs-col">${showCS ? escapeHtml(item.bid_evaluation_criteria || 'N/A') : ''}</td>
                 <td>${escapeHtml(item.start_date || '')}</td>
+                <td>${escapeHtml(item.bid_opening_date || '')}</td>
+                <td>${escapeHtml(item.notice_of_award_date || '')}</td>
                 <td>${escapeHtml(item.end_date || '')}</td>
                 <td>${escapeHtml(item.delivery_period || '')}</td>
                 <td>${escapeHtml(item.fund_source || '')}</td>
@@ -1328,8 +1348,8 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
                 <table class="excel-preview-table${showCS ? '' : ' ep-hide-cs'}">
                     <thead>
                         <tr>
-                            <th colspan="${showCS ? 6 : 5}">PROCUREMENT PROJECT DETAILS</th>
-                            <th colspan="3">PROJECTED TIMELINE (MM/YYYY)</th>
+                            <th colspan="${showCS ? 8 : 5}">PROCUREMENT PROJECT DETAILS</th>
+                            <th colspan="5">PROJECTED TIMELINE (MM/YYYY)</th>
                             <th colspan="2">FUNDING DETAILS</th>
                             <th rowspan="2" class="ep-cs-col">PROCUREMENT STRATEGIES AND TOOLS</th>
                             <th rowspan="2">ATTACHED SUPPORTING DOCUMENTS</th>
@@ -1339,13 +1359,17 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
                         </tr>
                         <tr>
                             <th>General Description and Objective of the Project to be Procured</th>
+                            <th class="ep-cs-col">PAP Code</th>
+                            <th class="ep-cs-col">Object Code</th>
                             <th>Type of the Project to be Procured</th>
                             <th>Quantity and Size of the Project to be Procured</th>
                             <th>Recommended Mode of Procurement</th>
                             <th>Pre-Procurement Conference (Yes/No)</th>
                             <th class="ep-cs-col">Criteria for Bid Evaluation</th>
-                            <th>Start of Procurement Activity</th>
-                            <th>End of Procurement Activity</th>
+                            <th>Advertisement/Posting of IB/REI</th>
+                            <th>Submission/Opening of Bids</th>
+                            <th>Notice of Award</th>
+                            <th>Contract Signing</th>
                             <th>Expected Delivery/ Implementation Period</th>
                             <th>Source of Funds</th>
                             <th>Estimated Budget / Authorized Budgetary Allocation (PhP)</th>
@@ -1354,8 +1378,9 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
                             ${(() => {
                                 // Number only the visible columns so hiding two leaves no gap.
                                 let shown = 0;
-                                return Array.from({ length: 15 }, (_, i) => {
-                                    const isCS = (i + 1 === 6 || i + 1 === 12);
+                                return Array.from({ length: 19 }, (_, i) => {
+                                    // PAP Code (2), Object (3), Criteria (8) and Strategies (16)
+                                    const isCS = [2, 3, 8, 16].indexOf(i + 1) !== -1;
                                     if (isCS && !showCS) return '<th class="ep-cs-col"></th>';
                                     shown += 1;
                                     return '<th>Column ' + shown + '</th>';
@@ -1366,9 +1391,9 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
                     </thead>
                     <tbody>
                         ${itemRows}
-                        ${editable ? '' : `<tr class="ep-filter-empty hidden"><td colspan="${showCS ? 15 : 13}">No items match the current filters.</td></tr>`}
+                        ${editable ? '' : `<tr class="ep-filter-empty hidden"><td colspan="${showCS ? 19 : 15}">No items match the current filters.</td></tr>`}
                         <tr>
-                            <td colspan="${showCS ? 10 : 9}" class="excel-total-label">TOTAL BUDGET:</td>
+                            <td colspan="${showCS ? 14 : 11}" class="excel-total-label">TOTAL BUDGET:</td>
                             <td class="excel-total-value">${escapeHtml(formattedTotal)}</td>
                             <td class="ep-cs-col"></td>
                             <td></td>
@@ -1377,7 +1402,7 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
                             ${editable ? '<td></td>' : ''}
                         </tr>
                         ${editable ? '' : `<tr class="ep-filter-subtotal hidden">
-                            <td colspan="${showCS ? 10 : 9}" class="excel-total-label ep-filter-subtotal-label"></td>
+                            <td colspan="${showCS ? 14 : 11}" class="excel-total-label ep-filter-subtotal-label"></td>
                             <td class="excel-total-value ep-filter-subtotal-value"></td>
                             <td class="ep-cs-col"></td>
                             <td></td>
@@ -1386,7 +1411,7 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
                         </tr>`}
                         ${editable ? `
                         <tr class="ep-add-row">
-                            <td colspan="16">
+                            <td colspan="20">
                                 <button type="button" class="ep-add-btn" onclick="addPreviewItem(${Number(record.id)})">
                                     <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5V19M5 12H19" stroke-linecap="round"/></svg>
                                     Add Item
@@ -2267,6 +2292,12 @@ function onPreviewFieldInput(el) {
         if (cleaned !== el.value) el.value = cleaned;
     }
 
+    // Object Code accepts digits only.
+    if (field === 'object_name') {
+        const digits = el.value.replace(/\D/g, '');
+        if (digits !== el.value) el.value = digits;
+    }
+
     item[field] = el.value;
     updatePreviewDirtyIndicator(recordId);
 
@@ -2275,7 +2306,7 @@ function onPreviewFieldInput(el) {
     // (unless it already showed an error - then clear it as they fix it).
     if (el.tagName === 'SELECT' || el.type === 'date') markPreviewTouched(draft, itemId, field);
 
-    if (field === 'start_date' || field === 'end_date') syncPreviewDateLimits(recordId, itemId, item);
+    if (PREVIEW_MILESTONE_ORDER.indexOf(field) !== -1) syncPreviewDateLimits(recordId, itemId, item);
     if (field === 'project_type') refreshPreviewDocCell(recordId, itemId);
     if (field === 'budget' || field === 'mode') updatePreviewBracketHint(recordId, itemId);
 
@@ -2351,10 +2382,25 @@ function previewNextDay(isoDate) {
     return d.toISOString().slice(0, 10);
 }
 
+// The four procurement milestones in the order they must happen.
+const PREVIEW_MILESTONE_ORDER = ['start_date', 'bid_opening_date', 'notice_of_award_date', 'end_date'];
+
+// Earliest date a milestone may take: the nearest earlier milestone that has a date.
+function previewDateFloor(item, field) {
+    const idx = PREVIEW_MILESTONE_ORDER.indexOf(field);
+    for (let i = idx - 1; i >= 0; i--) {
+        const v = item && item[PREVIEW_MILESTONE_ORDER[i]];
+        if (v) return v;
+    }
+    return '2000-01-01';
+}
+
 // Keeps the calendar pickers from offering dates the rules would reject.
 function syncPreviewDateLimits(recordId, itemId, item) {
-    document.querySelectorAll(`[data-record-id="${recordId}"][data-item-id="${itemId}"][data-field="end_date"]`).forEach(el => {
-        el.min = item.start_date || '2000-01-01';
+    ['bid_opening_date', 'notice_of_award_date', 'end_date'].forEach(function (name) {
+        document.querySelectorAll(`[data-record-id="${recordId}"][data-item-id="${itemId}"][data-field="${name}"]`).forEach(el => {
+            el.min = previewDateFloor(item, name);
+        });
     });
     document.querySelectorAll(`[data-record-id="${recordId}"][data-item-id="${itemId}"][data-field="delivery_period"]`).forEach(el => {
         el.min = item.end_date ? previewNextDay(item.end_date) : '2000-01-01';
@@ -2368,8 +2414,8 @@ function syncPreviewDateLimits(recordId, itemId, item) {
 // something the form would have refused.
 // ------------------------------------------------------------
 const PREVIEW_ALL_FIELDS = [
-    'project_description', 'project_type', 'quantity_size', 'mode', 'pre_procurement',
-    'bid_evaluation_criteria', 'start_date', 'end_date', 'delivery_period',
+    'project_description', 'object_name', 'project_type', 'quantity_size', 'mode', 'pre_procurement',
+    'bid_evaluation_criteria', 'start_date', 'bid_opening_date', 'notice_of_award_date', 'end_date', 'delivery_period',
     'fund_source', 'budget', 'strategies', 'remarks'
 ];
 
@@ -2379,7 +2425,9 @@ const PREVIEW_FIELD_DEPENDENTS = {
     mode: ['mode', 'budget', 'project_type', 'project_description'],
     project_type: ['project_type', 'mode'],
     project_description: ['project_description', 'mode'],
-    start_date: ['start_date', 'end_date', 'delivery_period'],
+    start_date: ['start_date', 'bid_opening_date', 'notice_of_award_date', 'end_date', 'delivery_period'],
+    bid_opening_date: ['bid_opening_date', 'notice_of_award_date', 'end_date', 'delivery_period'],
+    notice_of_award_date: ['notice_of_award_date', 'end_date', 'delivery_period'],
     end_date: ['end_date', 'delivery_period'],
     delivery_period: ['end_date', 'delivery_period']
 };
@@ -2443,18 +2491,33 @@ function validatePreviewItem(item) {
     if (!text('bid_evaluation_criteria')) errors.bid_evaluation_criteria = 'Select the criteria for bid evaluation.';
     else if (PREVIEW_CRITERIA_OPTIONS.indexOf(text('bid_evaluation_criteria')) === -1) errors.bid_evaluation_criteria = 'Choose a criteria from the list.';
 
-    // Dates: present, real, in range, and in order.
-    const start = text('start_date'), end = text('end_date'), delivery = text('delivery_period');
-    if (!start) errors.start_date = 'Select a start date.';
-    else if (!isRealPreviewDate(start)) errors.start_date = 'Enter a valid date (2000-2100).';
-    if (!end) errors.end_date = 'Select an end date.';
-    else if (!isRealPreviewDate(end)) errors.end_date = 'Enter a valid date (2000-2100).';
+    // Object Code: numbers only.
+    if (!text('object_name')) errors.object_name = 'Object Code is required.';
+    else if (!/^\d+$/.test(text('object_name'))) errors.object_name = 'Object Code must be numbers only.';
+
+    // Dates: present, real, in range, and in order
+    // (advertisement -> bid opening -> notice of award -> contract signing -> delivery).
+    const milestones = [
+        ['start_date', 'advertisement/posting date', 'Advertisement/posting date', 'the advertisement/posting date'],
+        ['bid_opening_date', 'submission/opening of bids date', 'Submission/opening of bids', 'the submission/opening of bids'],
+        ['notice_of_award_date', 'notice of award date', 'Notice of award', 'the notice of award'],
+        ['end_date', 'contract signing date', 'Contract signing', 'the contract signing']
+    ];
+    let prevMilestone = null;
+    milestones.forEach(m => {
+        const v = text(m[0]);
+        if (!v) { errors[m[0]] = 'Select the ' + m[1] + '.'; return; }
+        if (!isRealPreviewDate(v)) { errors[m[0]] = 'Enter a valid date (2000-2100).'; return; }
+        if (prevMilestone && new Date(v) < new Date(prevMilestone.value)) {
+            errors[m[0]] = m[2] + ' cannot be earlier than ' + prevMilestone.ref + '.';
+        }
+        prevMilestone = { value: v, ref: m[3] };
+    });
+
+    const end = text('end_date'), delivery = text('delivery_period');
     if (!delivery) errors.delivery_period = 'Select the expected delivery/implementation date.';
     else if (!isRealPreviewDate(delivery)) errors.delivery_period = 'Enter a valid date (2000-2100).';
 
-    if (!errors.start_date && !errors.end_date && new Date(end) < new Date(start)) {
-        errors.end_date = 'End date cannot be earlier than the start date.';
-    }
     if (!errors.end_date && !errors.delivery_period && new Date(delivery) <= new Date(end)) {
         errors.delivery_period = 'Delivery must be after the end of procurement activity.';
     }
@@ -3028,7 +3091,7 @@ function savePreviewChanges(recordId) {
     // Tidy the text the person typed, then check every item against the same
     // rules the request form uses. Nothing is saved until all of it passes.
     draft.items.forEach(item => {
-        ['project_description', 'quantity_size', 'fund_source', 'general_requirements', 'remarks'].forEach(key => {
+        ['project_description', 'object_name', 'quantity_size', 'fund_source', 'general_requirements', 'remarks'].forEach(key => {
             item[key] = String(item[key] == null ? '' : item[key]).trim();
         });
         const budget = parsePreviewBudget(item.budget);
@@ -3125,13 +3188,13 @@ function itemFilterAttrs(item, includeCriteriaStrategies = true) {
         ? item.supporting_documents.map(function (d) { return d.name || ''; })
         : [];
     const haystack = [
-        item.project_description, item.project_type, item.quantity_size, item.mode,
+        item.project_description, includeCriteriaStrategies ? item.object_name : '', item.project_type, item.quantity_size, item.mode,
         item.pre_procurement, includeCriteriaStrategies ? item.bid_evaluation_criteria : '', item.fund_source,
-        item.remarks, item.general_requirements, item.start_date, item.end_date, item.delivery_period,
+        item.remarks, item.general_requirements, item.start_date, item.bid_opening_date, item.notice_of_award_date, item.end_date, item.delivery_period,
         formatPesoExact(parseBudgetNumber(item.budget)),
         includeCriteriaStrategies ? (Array.isArray(item.strategies) ? item.strategies.join(' ') : item.strategies) : '',
         docNames.join(' '),
-        item.reference_no
+        includeCriteriaStrategies ? item.reference_no : ''
     ].map(function (v) { return String(v == null ? '' : v); }).join(' ').toLowerCase();
 
     return 'data-search="' + escapeHtml(haystack) + '"' +

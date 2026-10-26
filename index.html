@@ -190,6 +190,11 @@
                             <textarea id="project_description" placeholder="Enter the objective of the project..." style="height: 80px;" required></textarea>
                             <p class="field-error-msg">This field is required</p>
                         </div>
+                        <div class="field-group" data-field="object_name">
+                            <label>Object Code</label>
+                            <input type="text" id="object_name" inputmode="numeric" pattern="[0-9]*" placeholder="e.g. 5020301002" maxlength="10" required>
+                            <p class="field-error-msg">This field is required</p>
+                        </div>
                         <div class="field-group" data-field="is_indicative">
                             <label>Is Indicative or Final?</label>
                             <div class="select-wrapper"><select id="is_indicative" required><option value="" disabled selected>Select...</option><option>Indicative</option><option>Final</option></select><img src="images/vector-19.svg" class="custom-chevron"></div>
@@ -302,12 +307,22 @@
                 <form class="form-grid" id="form-step-2">
                     <div class="form-column">
                         <div class="field-group" data-field="start_date">
-                            <label>Start of Procurement Activity</label>
+                            <label>Advertisement/Posting of IB/REI (Start of Procurement Activity)</label>
                             <div class="input-with-icon"><span class="calendar-icon">📅</span><input id="start_date" type="date" required></div>
                             <p class="field-error-msg">This field is required</p>
                         </div>
+                        <div class="field-group" data-field="bid_opening_date">
+                            <label>Submission/Opening of Bids</label>
+                            <div class="input-with-icon"><span class="calendar-icon">📅</span><input id="bid_opening_date" type="date" required></div>
+                            <p class="field-error-msg">This field is required</p>
+                        </div>
+                        <div class="field-group" data-field="notice_of_award_date">
+                            <label>Notice of Award</label>
+                            <div class="input-with-icon"><span class="calendar-icon">📅</span><input id="notice_of_award_date" type="date" required></div>
+                            <p class="field-error-msg">This field is required</p>
+                        </div>
                         <div class="field-group" data-field="end_date">
-                            <label>End of Procurement Activity</label>
+                            <label>Contract Signing (End of Procurement Activity)</label>
                             <div class="input-with-icon"><span class="calendar-icon">📅</span><input id="end_date" type="date" required></div>
                             <p class="field-error-msg">This field is required</p>
                         </div>

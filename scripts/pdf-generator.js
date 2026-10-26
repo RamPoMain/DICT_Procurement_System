@@ -54,6 +54,8 @@ async function generatePPMP_PDF() {
             pre_procurement: getVal('pre_procurement'),
             bid_evaluation_criteria: getVal('bid_evaluation_criteria'),
             start_date: getVal('start_date'),
+            bid_opening_date: getVal('bid_opening_date'),
+            notice_of_award_date: getVal('notice_of_award_date'),
             end_date: getVal('end_date'),
             delivery_period: getVal('delivery_period'),
             fund_source: getVal('fund_source'),
@@ -154,7 +156,7 @@ async function generatePPMP_PDF() {
     const headers = [
         [
             { content: 'PROCUREMENT PROJECT DETAILS', colSpan: 6, styles: { halign: 'center' } },
-            { content: 'PROJECTED TIMELINE (MM/YYYY)', colSpan: 3, styles: { halign: 'center' } },
+            { content: 'PROJECTED TIMELINE (MM/YYYY)', colSpan: 5, styles: { halign: 'center' } },
             { content: 'FUNDING DETAILS', colSpan: 2, styles: { halign: 'center' } },
             { content: 'PROCUREMENT STRATEGIES AND TOOLS', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
             { content: 'ATTACHED SUPPORTING DOCUMENTS', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
@@ -168,13 +170,15 @@ async function generatePPMP_PDF() {
             'Recommended Mode of Procurement',
             'Pre-Procurement Conference (Yes/No)',
             'Criteria for Bid Evaluation',
-            'Start of Procurement Activity',
-            'End of Procurement Activity',
+            'Advertisement/Posting of IB/REI',
+            'Submission/Opening of Bids',
+            'Notice of Award',
+            'Contract Signing',
             'Expected Delivery/ Implementation Period',
             'Source of Funds',
             'Estimated Budget / Authorized Budgetary Allocation (PhP)'
         ],
-        ['Column 1', 'Column 2', 'Column 3', 'Column 4', 'Column 5', 'Column 6', 'Column 7', 'Column 8', 'Column 9', 'Column 10', 'Column 11', 'Column 12', 'Column 13', 'Column 14', 'Column 15']
+        ['Column 1', 'Column 2', 'Column 3', 'Column 4', 'Column 5', 'Column 6', 'Column 7', 'Column 8', 'Column 9', 'Column 10', 'Column 11', 'Column 12', 'Column 13', 'Column 14', 'Column 15', 'Column 16', 'Column 17']
     ];
 
     const itemRows = items.map(item => {
@@ -194,6 +198,8 @@ async function generatePPMP_PDF() {
             item.pre_procurement || '',
             item.bid_evaluation_criteria || 'N/A', // Col 6: Criteria
             item.start_date || '',
+            item.bid_opening_date || '',
+            item.notice_of_award_date || '',
             item.end_date || '',
             item.delivery_period || '',
             item.fund_source || '',
@@ -208,7 +214,7 @@ async function generatePPMP_PDF() {
     const rows = [
         ...itemRows,
         [
-            { content: 'TOTAL BUDGET:', colSpan: 10, styles: { halign: 'right', fontStyle: 'bold' } },
+            { content: 'TOTAL BUDGET:', colSpan: 12, styles: { halign: 'right', fontStyle: 'bold' } },
             { content: `P ${formattedTotal}`, styles: { fontStyle: 'bold' } },
             '',
             '',
@@ -219,7 +225,8 @@ async function generatePPMP_PDF() {
 
     // Column widths are proportional shares of the printable width (A4 landscape
     // minus margins), so all 15 columns fit on the page and no word gets chopped
-    // mid-way. Order = the 15 columns of the PPMP form.
+    // mid-way. Order = the 17 columns of the PPMP form (PAP Code and Object are
+    // entry-stage only and are deliberately not printed).
     const usableWidth = pageWidth - margin * 2;
     const colWeights = [
         9.5,   // 1  General description
@@ -228,22 +235,24 @@ async function generatePPMP_PDF() {
         7.5,   // 4  Mode of procurement
         5.5,   // 5  Pre-procurement conference
         7.5,   // 6  Criteria for bid evaluation
-        6,     // 7  Start of procurement
-        6,     // 8  End of procurement
-        7,     // 9  Delivery / implementation period
-        6.5,   // 10 Source of funds
-        10,    // 11 Estimated budget
-        11.5,  // 12 Strategies and tools
-        8.5,   // 13 Attached documents
-        8,     // 14 General requirements / miscellaneous / common supplies and equipment
-        6.5    // 15 Remarks
+        6,     // 7  Advertisement/Posting of IB/REI (start of procurement)
+        6,     // 8  Submission/Opening of Bids
+        6,     // 9  Notice of Award
+        6,     // 10 Contract Signing (end of procurement)
+        7,     // 11 Delivery / implementation period
+        6.5,   // 12 Source of funds
+        10,    // 13 Estimated budget
+        11.5,  // 14 Strategies and tools
+        8.5,   // 15 Attached documents
+        8,     // 16 General requirements / miscellaneous / common supplies and equipment
+        6.5    // 17 Remarks
     ];
     const weightTotal = colWeights.reduce((a, b) => a + b, 0);
     const columnStyles = {};
     colWeights.forEach((weight, i) => {
         columnStyles[i] = { cellWidth: usableWidth * weight / weightTotal };
     });
-    columnStyles[10].halign = 'right';   // money lines up on the right
+    columnStyles[12].halign = 'right';   // money lines up on the right
 
     doc.autoTable({
         startY: currentY + 10,
@@ -459,11 +468,11 @@ async function buildAPP_PDF(targetYear = null) {
 
     currentY += 8;
 
-    // 4. Table Headers (12 Columns)
+    // 4. Table Headers (14 Columns). PAP Code and Object are not part of the APP.
     const headers = [
         [
             { content: 'PROCUREMENT PROJECT DETAILS', colSpan: 6, styles: { halign: 'center' } },
-            { content: 'PROJECTED TIMELINE (MM/YYYY)', colSpan: 2, styles: { halign: 'center' } },
+            { content: 'PROJECTED TIMELINE (MM/YYYY)', colSpan: 4, styles: { halign: 'center' } },
             { content: 'FUNDING DETAILS', colSpan: 2, styles: { halign: 'center' } },
             { content: 'PROCUREMENT STRATEGY OR TOOLS', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
             { content: 'REMARKS\n(Other relevant descriptions of the procurement project, if applicable)', rowSpan: 2, styles: { halign: 'center', valign: 'middle' } }
@@ -475,14 +484,17 @@ async function buildAPP_PDF(targetYear = null) {
             'Mode of Procurement',
             'To be covered by an Early Procurement Activity? (Yes/No)',
             'Criteria for Bid Evaluation\n(Including Sustainability and Domestic Preference)',
-            'Start of Procurement Activity',
-            'End of Procurement Activity',
+            'Advertisement/Posting of IB/REI',
+            'Submission/Opening of Bids',
+            'Notice of Award',
+            'Contract Signing',
             'Source of Fund',
             'Estimated Budget / Approved Budget for the Contract (PhP)'
         ],
         [
             'Column 1', 'Column 2', 'Column 3', 'Column 4', 'Column 5', 'Column 6',
-            'Column 7', 'Column 8', 'Column 9', 'Column 10', 'Column 11', 'Column 12'
+            'Column 7', 'Column 8', 'Column 9', 'Column 10', 'Column 11', 'Column 12',
+            'Column 13', 'Column 14'
         ]
     ];
 
@@ -502,6 +514,8 @@ async function buildAPP_PDF(targetYear = null) {
             item.pre_procurement || 'No',
             item.bid_evaluation_criteria || 'N/A',
             item.start_date || '',
+            item.bid_opening_date || '',
+            item.notice_of_award_date || '',
             item.end_date || '',
             item.fund_source || 'N/A',
             `P ${itemBudget}`,
@@ -554,50 +568,50 @@ async function buildAPP_PDF(targetYear = null) {
 
     // Section 1: General Requirements
     tableBody.push([
-        { content: 'General Requirements', colSpan: 12, styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' } }
+        { content: 'General Requirements', colSpan: 14, styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' } }
     ]);
     if (generalItems.length > 0) {
         generalItems.forEach(item => tableBody.push(formatAppRow(item)));
     } else {
-        tableBody.push(['', '', '', '', '', '', '', '', '', '', '', '']);
+        tableBody.push(['', '', '', '', '', '', '', '', '', '', '', '', '', '']);
     }
 
     // Section 2: Miscellaneous Items (Direct Acquisition)
     tableBody.push([
-        { content: 'Miscellaneous Items (for Direct Acquisition only) Sec 32.2 of RA No. 12009', colSpan: 12, styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' } }
+        { content: 'Miscellaneous Items (for Direct Acquisition only) Sec 32.2 of RA No. 12009', colSpan: 14, styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' } }
     ]);
     if (directAcquisitionItems.length > 0) {
         directAcquisitionItems.forEach(item => tableBody.push(formatAppRow(item)));
     } else {
-        tableBody.push(['', '', '', '', '', '', '', '', '', '', '', '']);
+        tableBody.push(['', '', '', '', '', '', '', '', '', '', '', '', '', '']);
     }
 
     // Section 3: Common Supplies and Equipment
     tableBody.push([
-        { content: 'Common Supplies and Equipment (CSE)', colSpan: 12, styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' } }
+        { content: 'Common Supplies and Equipment (CSE)', colSpan: 14, styles: { fontStyle: 'bold', fillColor: [245, 245, 245], halign: 'left' } }
     ]);
     if (cseItems.length > 0) {
         cseItems.forEach(item => tableBody.push(formatAppRow(item)));
     } else {
-        tableBody.push(['', '', '', '', '', '', '', '', '', '', '', '']);
+        tableBody.push(['', '', '', '', '', '', '', '', '', '', '', '', '', '']);
     }
 
     // Total Budget Row
     tableBody.push([
-        { content: 'TOTAL BUDGET:', colSpan: 9, styles: { halign: 'right', fontStyle: 'bold' } },
+        { content: 'TOTAL BUDGET:', colSpan: 11, styles: { halign: 'right', fontStyle: 'bold' } },
         { content: `P ${formattedTotal}`, styles: { halign: 'right', fontStyle: 'bold' } },
         '',
         ''
     ]);
 
     const usableWidth = pageWidth - margin * 2;
-    const colWeights = [9, 9.5, 10.5, 9, 6.5, 9.5, 6.5, 6.5, 7, 9.5, 9, 7];
+    const colWeights = [9, 9.5, 10.5, 9, 6.5, 9.5, 6.5, 6.5, 6.5, 6.5, 7, 9.5, 9, 7];
     const totalWeights = colWeights.reduce((a, b) => a + b, 0);
     const columnStyles = {};
     colWeights.forEach((w, idx) => {
         columnStyles[idx] = { cellWidth: (usableWidth * w) / totalWeights };
     });
-    columnStyles[9].halign = 'right';
+    columnStyles[11].halign = 'right';
 
     doc.autoTable({
         startY: currentY,

@@ -1349,21 +1349,25 @@ html[data-theme="light"] .approval-info strong { color: #15803D; }
 }
 
 .db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(1)  { width: 240px; min-width: 240px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(2)  { width: 120px; min-width: 120px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(3)  { width: 130px; min-width: 130px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(4)  { width: 150px; min-width: 150px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(5)  { width: 110px; min-width: 110px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(6)  { width: 130px; min-width: 130px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(2)  { width: 130px; min-width: 130px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(3)  { width: 170px; min-width: 170px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(4)  { width: 120px; min-width: 120px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(5)  { width: 130px; min-width: 130px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(6)  { width: 150px; min-width: 150px; }
 .db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(7)  { width: 110px; min-width: 110px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(8)  { width: 110px; min-width: 110px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(9)  { width: 120px; min-width: 120px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(8)  { width: 130px; min-width: 130px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(9)  { width: 130px; min-width: 130px; }
 .db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(10) { width: 130px; min-width: 130px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(11) { width: 150px; min-width: 150px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(12) { width: 230px; min-width: 230px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(13) { width: 190px; min-width: 190px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(14) { width: 210px; min-width: 210px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(15) { width: 170px; min-width: 170px; }
-.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(16) { width: 52px;  min-width: 52px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(11) { width: 130px; min-width: 130px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(12) { width: 130px; min-width: 130px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(13) { width: 120px; min-width: 120px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(14) { width: 130px; min-width: 130px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(15) { width: 150px; min-width: 150px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(16) { width: 230px; min-width: 230px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(17) { width: 190px; min-width: 190px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(18) { width: 210px; min-width: 210px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(19) { width: 170px; min-width: 170px; }
+.db-entry-expand-inner .excel-preview-table thead tr:nth-child(3) th:nth-child(20) { width: 52px;  min-width: 52px; }
 
 /* ---- body ---- */
 
@@ -1396,25 +1400,28 @@ html[data-theme="light"] .approval-info strong { color: #15803D; }
     }
 }
 
-/* Criteria for Bid Evaluation and Procurement Strategies are hidden once a
-   PPMP is submitted for approval (they only show again in the APP). The cells
+/* PAP Code, Object, Criteria for Bid Evaluation and Procurement Strategies are
+   hidden once a PPMP is submitted for approval. Criteria and Strategies show
+   again in the APP; PAP Code and Object never do. The cells
    stay in the DOM so the nth-child width/alignment rules below keep matching. */
 .excel-preview-table.ep-hide-cs .ep-cs-col {
     display: none;
 }
 
 /* Numbers and dates line up */
-.db-entry-expand-inner .excel-preview-table tbody tr:not(.ep-add-row) > td:nth-child(5) {
+.db-entry-expand-inner .excel-preview-table tbody tr:not(.ep-add-row) > td:nth-child(7) {
     text-align: center;
 }
 
-.db-entry-expand-inner .excel-preview-table tbody tr:not(.ep-add-row) > td:nth-child(7),
-.db-entry-expand-inner .excel-preview-table tbody tr:not(.ep-add-row) > td:nth-child(8) {
+.db-entry-expand-inner .excel-preview-table tbody tr:not(.ep-add-row) > td:nth-child(9),
+.db-entry-expand-inner .excel-preview-table tbody tr:not(.ep-add-row) > td:nth-child(10),
+.db-entry-expand-inner .excel-preview-table tbody tr:not(.ep-add-row) > td:nth-child(11),
+.db-entry-expand-inner .excel-preview-table tbody tr:not(.ep-add-row) > td:nth-child(12) {
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
 }
 
-.db-entry-expand-inner .excel-preview-table tbody tr:not(.ep-add-row) > td:nth-child(11) {
+.db-entry-expand-inner .excel-preview-table tbody tr:not(.ep-add-row) > td:nth-child(15) {
     text-align: right;
     white-space: nowrap;
     font-weight: 600;

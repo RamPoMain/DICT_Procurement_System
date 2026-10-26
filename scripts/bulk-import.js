@@ -41,13 +41,16 @@
     // in Excel does not break the import.
     var COLUMNS = [
         { key: 'project_description',     label: 'Description',        match: /description|objective/,        width: 36, header: 'General Description and Objective of the Project to be Procured' },
+        { key: 'object_name',             label: 'Object Code',             match: /^object(?!ive)/,               width: 26, header: 'Object Code' },
         { key: 'project_type',            label: 'Type of Project',    match: /type of (the )?project/,       width: 22, header: 'Type of the Project to be Procured' },
         { key: 'quantity_size',           label: 'Quantity and Size',  match: /quantity|size/,                width: 24, header: 'Quantity and Size of the Project to be Procured' },
         { key: 'mode',                    label: 'Mode of Procurement',match: /\bmode\b/,                     width: 26, header: 'Recommended Mode of Procurement' },
         { key: 'pre_procurement',         label: 'Pre-Procurement',    match: /pre.?procurement/,             width: 20, header: 'Pre-Procurement Conference (Yes/No)' },
         { key: 'bid_evaluation_criteria', label: 'Bid Criteria',       match: /criteria/,                     width: 30, header: 'Criteria for Bid Evaluation' },
-        { key: 'start_date',              label: 'Start date',         match: /^start/,                       width: 18, header: 'Start of Procurement Activity' },
-        { key: 'end_date',                label: 'End date',           match: /^end/,                         width: 18, header: 'End of Procurement Activity' },
+        { key: 'start_date',              label: 'Advertisement/Posting', match: /^start|advertis|posting/,    width: 22, header: 'Advertisement/Posting of IB/REI' },
+        { key: 'bid_opening_date',        label: 'Submission/Opening of Bids', match: /submission|opening/,    width: 22, header: 'Submission/Opening of Bids' },
+        { key: 'notice_of_award_date',    label: 'Notice of Award',    match: /notice|award/,                 width: 18, header: 'Notice of Award' },
+        { key: 'end_date',                label: 'Contract Signing',   match: /^end|contract signing/,        width: 18, header: 'Contract Signing' },
         { key: 'delivery_period',         label: 'Delivery period',    match: /delivery|implementation/,      width: 22, header: 'Expected Delivery/ Implementation Period' },
         { key: 'fund_source',             label: 'Source of Funds',    match: /fund/,                         width: 18, header: 'Source of Funds' },
         { key: 'budget',                  label: 'Budget',             match: /budget/,                       width: 24, header: 'Estimated Budget / Authorized Budgetary Allocation (PhP)' },
@@ -250,6 +253,11 @@
         if (description.length < 3) errors.push('Description is required (at least 3 characters).');
         item.project_description = description;
 
+        var objectName = text('object_name');
+        if (!objectName) errors.push('Object Code is required.');
+        else if (!/^\d+$/.test(objectName)) errors.push('Object Code must be numbers only.');
+        item.object_name = objectName;
+
         var type = canonical(raw.project_type, allowed.types);
         if (!type) errors.push('Type of Project must be one of: ' + allowed.types.join(', ') + '.');
         item.project_type = type || '';
@@ -271,14 +279,31 @@
         item.bid_evaluation_criteria = criteria || '';
 
         var start = toIsoDate(raw.start_date);
+        var bids = toIsoDate(raw.bid_opening_date);
+        var award = toIsoDate(raw.notice_of_award_date);
         var end = toIsoDate(raw.end_date);
         var delivery = toIsoDate(raw.delivery_period);
-        if (!start) errors.push('Start date is missing or not a valid date (use YYYY-MM-DD).');
-        if (!end) errors.push('End date is missing or not a valid date (use YYYY-MM-DD).');
+        if (!start) errors.push('Advertisement/Posting of IB/REI is missing or not a valid date (use YYYY-MM-DD).');
+        if (!bids) errors.push('Submission/Opening of Bids is missing or not a valid date (use YYYY-MM-DD).');
+        if (!award) errors.push('Notice of Award is missing or not a valid date (use YYYY-MM-DD).');
+        if (!end) errors.push('Contract Signing is missing or not a valid date (use YYYY-MM-DD).');
         if (!delivery) errors.push('Delivery period is missing or not a valid date (use YYYY-MM-DD).');
-        if (start && end && end < start) errors.push('End date cannot be earlier than the start date.');
-        if (end && delivery && delivery <= end) errors.push('Delivery period must be after the end date.');
+        // Each milestone may not fall before the nearest earlier one that has a date.
+        var earlier = null;
+        [
+            [start, 'Advertisement/Posting of IB/REI', 'the advertisement/posting date'],
+            [bids, 'Submission/Opening of Bids', 'the submission/opening of bids'],
+            [award, 'Notice of Award', 'the notice of award'],
+            [end, 'Contract Signing', 'the contract signing']
+        ].forEach(function (m) {
+            if (!m[0]) return;
+            if (earlier && m[0] < earlier.date) errors.push(m[1] + ' cannot be earlier than ' + earlier.name + '.');
+            earlier = { date: m[0], name: m[2] };
+        });
+        if (end && delivery && delivery <= end) errors.push('Delivery period must be after the Contract Signing date.');
         item.start_date = start || '';
+        item.bid_opening_date = bids || '';
+        item.notice_of_award_date = award || '';
         item.end_date = end || '';
         item.delivery_period = delivery || '';
 
@@ -373,7 +398,7 @@
         var problems = [];
         var total = 0;
 
-        // Start right after the header rows, skipping the "Column 1 ... Column 15"
+        // Start right after the header rows, skipping the "Column 1 ... Column 18"
         // numbering row the template has under them.
         var startRow = header.headerIndex + header.rowsUsed;
         while (startRow < rows.length) {
@@ -461,34 +486,37 @@
                 views: [{ showGridLines: true }]
             });
 
-            // 1. Column Widths (15 columns)
+            // 1. Column Widths (18 columns, A-R)
             sheet.columns = [
                 { width: 36 }, // Col 1: Description
-                { width: 22 }, // Col 2: Type
-                { width: 24 }, // Col 3: Quantity
-                { width: 26 }, // Col 4: Mode
-                { width: 20 }, // Col 5: Pre-procurement
-                { width: 28 }, // Col 6: Criteria
-                { width: 18 }, // Col 7: Start Date
-                { width: 18 }, // Col 8: End Date
-                { width: 22 }, // Col 9: Delivery
-                { width: 18 }, // Col 10: Fund Source
-                { width: 24 }, // Col 11: Budget
-                { width: 32 }, // Col 12: Strategies
-                { width: 24 }, // Col 13: Attached Docs
-                { width: 32 }, // Col 14: General Requirements / Misc. / Common Supplies
-                { width: 20 }  // Col 15: Remarks
+                { width: 26 }, // Col 2: Object
+                { width: 22 }, // Col 3: Type
+                { width: 24 }, // Col 4: Quantity
+                { width: 26 }, // Col 5: Mode
+                { width: 20 }, // Col 6: Pre-procurement
+                { width: 28 }, // Col 7: Criteria
+                { width: 22 }, // Col 8: Advertisement/Posting of IB/REI (start)
+                { width: 22 }, // Col 9: Submission/Opening of Bids
+                { width: 18 }, // Col 10: Notice of Award
+                { width: 18 }, // Col 11: Contract Signing (end)
+                { width: 22 }, // Col 12: Delivery
+                { width: 18 }, // Col 13: Fund Source
+                { width: 24 }, // Col 14: Budget
+                { width: 32 }, // Col 15: Strategies
+                { width: 24 }, // Col 16: Attached Docs
+                { width: 32 }, // Col 17: General Requirements / Misc. / Common Supplies
+                { width: 20 }  // Col 18: Remarks
             ];
 
             // 2. Titles & Metadata
-            sheet.mergeCells('A1:O1');
+            sheet.mergeCells('A1:R1');
             var title = sheet.getCell('A1');
             title.value = 'PROJECT PROCUREMENT MANAGEMENT PLAN (PPMP) NO. ' + ppmpNo;
             title.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FF000000' } };
             title.alignment = { horizontal: 'center', vertical: 'middle' };
             sheet.getRow(1).height = 28;
 
-            sheet.mergeCells('A2:O2');
+            sheet.mergeCells('A2:R2');
             var checks = sheet.getCell('A2');
             checks.value = isFinal ? '[ ] INDICATIVE     [X] FINAL' : '[X] INDICATIVE     [ ] FINAL';
             checks.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF000000' } };
@@ -510,39 +538,42 @@
             sheet.getRow(6).height = 10;
 
             // 3. Group Headers (Row 7)
-            sheet.mergeCells('A7:F7');
+            sheet.mergeCells('A7:G7');
             sheet.getCell('A7').value = 'PROCUREMENT PROJECT DETAILS';
 
-            sheet.mergeCells('G7:I7');
-            sheet.getCell('G7').value = 'PROJECTED TIMELINE (MM/YYYY)';
+            sheet.mergeCells('H7:L7');
+            sheet.getCell('H7').value = 'PROJECTED TIMELINE (MM/YYYY)';
 
-            sheet.mergeCells('J7:K7');
-            sheet.getCell('J7').value = 'FUNDING DETAILS';
-
-            sheet.mergeCells('L7:L8');
-            sheet.getCell('L7').value = 'PROCUREMENT STRATEGIES AND TOOLS';
-
-            sheet.mergeCells('M7:M8');
-            sheet.getCell('M7').value = 'ATTACHED SUPPORTING DOCUMENTS';
-
-            sheet.mergeCells('N7:N8');
-            sheet.getCell('N7').value = 'GENERAL REQUIREMENTS/MISCELLANEOUS/COMMON SUPPLIES AND EQUIPMENT';
+            sheet.mergeCells('M7:N7');
+            sheet.getCell('M7').value = 'FUNDING DETAILS';
 
             sheet.mergeCells('O7:O8');
-            sheet.getCell('O7').value = 'REMARKS';
+            sheet.getCell('O7').value = 'PROCUREMENT STRATEGIES AND TOOLS';
+
+            sheet.mergeCells('P7:P8');
+            sheet.getCell('P7').value = 'ATTACHED SUPPORTING DOCUMENTS';
+
+            sheet.mergeCells('Q7:Q8');
+            sheet.getCell('Q7').value = 'GENERAL REQUIREMENTS/MISCELLANEOUS/COMMON SUPPLIES AND EQUIPMENT';
+
+            sheet.mergeCells('R7:R8');
+            sheet.getCell('R7').value = 'REMARKS';
 
             sheet.getRow(7).height = 24;
 
             // 4. Subheaders (Row 8)
             var subHeaders = [
                 'General Description and Objective of the Project to be Procured',
+                'Object Code',
                 'Type of the Project to be Procured',
                 'Quantity and Size of the Project to be Procured',
                 'Recommended Mode of Procurement',
                 'Pre-Procurement Conference (Yes/No)',
                 'Criteria for Bid Evaluation',
-                'Start of Procurement Activity',
-                'End of Procurement Activity',
+                'Advertisement/Posting of IB/REI',
+                'Submission/Opening of Bids',
+                'Notice of Award',
+                'Contract Signing',
                 'Expected Delivery/ Implementation Period',
                 'Source of Funds',
                 'Estimated Budget / Authorized Budgetary Allocation (PhP)'
@@ -553,7 +584,7 @@
             sheet.getRow(8).height = 46;
 
             // 5. Column Numbers (Row 9)
-            for (var c = 1; c <= 15; c++) {
+            for (var c = 1; c <= 18; c++) {
                 sheet.getRow(9).getCell(c).value = 'Column ' + c;
             }
             sheet.getRow(9).height = 18;
@@ -563,9 +594,22 @@
                 sheet.getRow(r).height = 32;
             }
 
-            // Dropdown on the General Requirements column (N10:N14).
+            // Object Code column (B10:B14): whole numbers only.
+            for (var ov = 10; ov <= 14; ov++) {
+                sheet.getCell('B' + ov).dataValidation = {
+                    type: 'whole',
+                    operator: 'between',
+                    allowBlank: true,
+                    showErrorMessage: true,
+                    formulae: [0, 9999999999],
+                    errorTitle: 'Object Code',
+                    error: 'Object Code must be numbers only.'
+                };
+            }
+
+            // Dropdown on the General Requirements column (Q10:Q14).
             for (var dv = 10; dv <= 14; dv++) {
-                sheet.getCell('N' + dv).dataValidation = {
+                sheet.getCell('Q' + dv).dataValidation = {
                     type: 'list',
                     allowBlank: true,
                     formulae: ['"' + GENERAL_REQUIREMENT_OPTIONS.join(',') + '"']
@@ -573,14 +617,14 @@
             }
 
             // 7. Total Budget Row (Row 15)
-            sheet.mergeCells('A15:J15');
+            sheet.mergeCells('A15:M15');
             var totLabel = sheet.getCell('A15');
             totLabel.value = 'TOTAL BUDGET:';
             totLabel.font = { name: 'Arial', size: 9.5, bold: true };
             totLabel.alignment = { horizontal: 'right', vertical: 'middle' };
 
-            var totVal = sheet.getCell('K15');
-            totVal.value = { formula: 'SUM(K10:K14)', result: 0 };
+            var totVal = sheet.getCell('N15');
+            totVal.value = { formula: 'SUM(N10:N14)', result: 0 };
             totVal.font = { name: 'Arial', size: 9.5, bold: true };
             totVal.alignment = { horizontal: 'right', vertical: 'middle' };
             totVal.numFmt = '"P "#,##0.00';
@@ -596,7 +640,7 @@
 
             for (var rowIdx = 7; rowIdx <= 15; rowIdx++) {
                 var rowObj = sheet.getRow(rowIdx);
-                for (var colIdx = 1; colIdx <= 15; colIdx++) {
+                for (var colIdx = 1; colIdx <= 18; colIdx++) {
                     var cell = rowObj.getCell(colIdx);
                     cell.border = thinBorder;
 
@@ -605,10 +649,11 @@
                         cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
                     } else if (rowIdx >= 10 && rowIdx <= 14) {
                         cell.font = { name: 'Arial', size: 9, color: { argb: 'FF000000' } };
-                        var align = (colIdx === 11) ? 'right' : ((colIdx >= 2 && colIdx <= 9) ? 'center' : 'left');
+                        var align = (colIdx === 14) ? 'right' : ((colIdx >= 3 && colIdx <= 12) ? 'center' : 'left');
                         cell.alignment = { horizontal: align, vertical: 'middle', wrapText: true };
-                        if (colIdx === 11) cell.numFmt = '"P "#,##0.00';
-                        if (colIdx >= 7 && colIdx <= 9) cell.numFmt = 'yyyy-mm-dd';
+                        if (colIdx === 14) cell.numFmt = '"P "#,##0.00';
+                        if (colIdx === 2) cell.numFmt = '0';
+                        if (colIdx >= 8 && colIdx <= 12) cell.numFmt = 'yyyy-mm-dd';
                     }
                 }
             }
@@ -618,11 +663,11 @@
             sheet.getCell('A18').value = 'Prepared by / Submitted by:';
             sheet.getCell('A18').font = { name: 'Arial', size: 9.5, bold: true };
 
-            sheet.getCell('F18').value = 'Endorsed by:';
-            sheet.getCell('F18').font = { name: 'Arial', size: 9.5, bold: true };
+            sheet.getCell('I18').value = 'Endorsed by:';
+            sheet.getCell('I18').font = { name: 'Arial', size: 9.5, bold: true };
 
-            sheet.getCell('L18').value = 'Certified Funds Available:';
-            sheet.getCell('L18').font = { name: 'Arial', size: 9.5, bold: true };
+            sheet.getCell('O18').value = 'Certified Funds Available:';
+            sheet.getCell('O18').font = { name: 'Arial', size: 9.5, bold: true };
 
             var sigUnderline = { top: { style: 'medium', color: { argb: 'FF000000' } } };
 
@@ -662,8 +707,8 @@
             }
 
             makeSigBlock(1, 4, 'JAYMARK D. DUMIO', 'Signature over Printed Name', 'Focal, ICT Literacy Competency and Development Bureau X', dateStr);
-            makeSigBlock(6, 9, 'EUGENE C. RAPOSALA III', 'Signature over Printed Name', 'Chief, Technical Operations Division', null);
-            makeSigBlock(12, 15, 'BRYAN JOHN M. SABLAS', 'Signature over Printed Name', 'Budget Officer II', null);
+            makeSigBlock(9, 12, 'EUGENE C. RAPOSALA III', 'Signature over Printed Name', 'Chief, Technical Operations Division', null);
+            makeSigBlock(15, 18, 'BRYAN JOHN M. SABLAS', 'Signature over Printed Name', 'Budget Officer II', null);
 
             // Endorsed By Section
             sheet.getCell('A27').value = 'Endorsed by:';
@@ -698,7 +743,8 @@
                 ['How to fill in the "' + TEMPLATE_SHEET + '" sheet', ''],
                 ['', ''],
                 ['Rows', 'One item per row, in the numbered rows under the headers. Add more rows above the TOTAL BUDGET row if you need them.'],
-                ['Dates', 'Start, End and Delivery must be full dates (YYYY-MM-DD), e.g. 2026-10-01. End must not be before Start; Delivery must be after End.'],
+                ['Object Code', 'Numbers only (digits, no spaces or letters), e.g. 5020301002. The PAP Code is assigned automatically; do not enter it.'],
+                ['Dates', 'Advertisement/Posting of IB/REI, Submission/Opening of Bids, Notice of Award, Contract Signing and Delivery must be full dates (YYYY-MM-DD), e.g. 2026-10-01. Each one must not be earlier than the one before it; Delivery must be after Contract Signing.'],
                 ['Budget', 'A number greater than 0. The mode must match the budget bracket (e.g. Small Value Procurement within its limit).'],
                 ['Strategies', 'One or more of the strategies below, separated by a semicolon or a new line.'],
                 ['Supporting documents', 'Leave blank. Files cannot be imported; attach them to each item (Edit) before submitting.'],
