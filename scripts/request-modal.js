@@ -1438,6 +1438,11 @@ function saveProcurementRequest() {
                 'budget'
             ).value,
 
+        expense_class:
+            document.getElementById('expense_class')
+            ? document.getElementById('expense_class').value
+            : 'N/A',
+
         strategies:
             [...selectedStrategies],
 
@@ -1991,7 +1996,16 @@ function validateIndividualField(fieldGroup) {
             return false;
         }
     }
-
+    
+    // --------------------------------------------------------
+    // BUDGET CLASSIFICATION (MOOE / CO / N/A)
+    // --------------------------------------------------------
+    if (fieldName === 'expense_class') {
+        if (!value || ['MOOE', 'CO', 'N/A'].indexOf(value.toUpperCase()) === -1) {
+            showFieldError(fieldName, 'Please select whether the budget is MOOE, CO, or N/A.');
+            return false;
+        }
+    }
 
     // --------------------------------------------------------
     // Delivery period
@@ -3901,6 +3915,7 @@ function loadRecordIntoModal(id, itemIndex = 0) {
         'delivery_period': item.delivery_period,
         'fund_source': item.fund_source,
         'budget': item.budget,
+        'expense_class': item.expense_class || 'N/A',
         'general_requirements': item.general_requirements,
         'remarks': item.remarks
     };

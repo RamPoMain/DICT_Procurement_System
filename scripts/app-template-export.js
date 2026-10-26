@@ -113,6 +113,7 @@
         ws.getRow(4).height = 36;
 
         // Data rows
+        // Data rows
         rows.forEach(function (r, i) {
             const n = FIRST_DATA_ROW + i;
             const row = ws.getRow(n);
@@ -122,9 +123,9 @@
                 r.end_user || null, r.mode || null,
                 isoToDate(r.start), isoToDate(r.bids), isoToDate(r.award), isoToDate(r.end),
                 r.fund || null,
-                { formula: 'SUM(L' + n + ':M' + n + ')', result: r.amount },
-                r.cls === 'MOOE' ? r.amount : null,
-                r.cls === 'CO' ? r.amount : null,
+                r.amount,     // Col K: Total Estimated Budget (PhP)
+                r.mooe,       // Col L: MOOE ("Yes", "No", or "N/A")
+                r.co,         // Col M: CO ("Yes", "No", or "N/A")
                 r.remarks || null
             ];
             row.height = 36;
@@ -132,26 +133,25 @@
                 const cell = row.getCell(c);
                 cell.font = { name: 'Arial', size: 9 };
                 cell.border = BORDER;
-                cell.alignment = { vertical: 'middle', wrapText: true,
-                                   horizontal: (c >= 6 && c <= 9) ? 'center' : (c >= 11 && c <= 13 ? 'right' : 'left') };
+                cell.alignment = { 
+                    vertical: 'middle', 
+                    wrapText: true,
+                    horizontal: (c >= 6 && c <= 9) || (c === 12 || c === 13) ? 'center' : (c === 11 ? 'right' : 'left') 
+                };
                 if (c === 3) cell.numFmt = '0';
                 if (c >= 6 && c <= 9) cell.numFmt = DATE_FMT;
-                if (c >= 11 && c <= 13) cell.numFmt = PESO_FMT;
+                if (c === 11) cell.numFmt = PESO_FMT; // Total is Peso; L and M remain text
             }
         });
 
-        // Total row
+        // Total row: Sum only Column K (Total Budget); Columns L and M remain blank
         const last = FIRST_DATA_ROW + rows.length - 1;
         const tot = last + 1;
         ws.mergeCells('A' + tot + ':J' + tot);
         ws.getCell('A' + tot).value = 'TOTAL';
-        ['K', 'L', 'M'].forEach(function (col) {
-            const sum = rows.reduce(function (s, r) {
-                return s + (col === 'K' || r.cls === (col === 'L' ? 'MOOE' : 'CO') ? r.amount : 0);
-            }, 0);
-            ws.getCell(col + tot).value = { formula: 'SUM(' + col + FIRST_DATA_ROW + ':' + col + last + ')', result: sum };
-            ws.getCell(col + tot).numFmt = PESO_FMT;
-        });
+        const sumTotal = rows.reduce((s, r) => s + (r.amount || 0), 0);
+        ws.getCell('K' + tot).value = { formula: 'SUM(K' + FIRST_DATA_ROW + ':K' + last + ')', result: sumTotal };
+        ws.getCell('K' + tot).numFmt = PESO_FMT;
         for (let c = 1; c <= 14; c++) {
             const cell = ws.getRow(tot).getCell(c);
             cell.font = { name: 'Arial', size: 9, bold: true };
@@ -219,6 +219,13 @@
         picked.forEach(function (record) {
             sources.push((record.end_user || 'N/A') + ' - PPMP No. ' + (record.ppmp_no || 'N/A'));
             getRecordItems(record).forEach(function (item) {
+                const indicators = (typeof getMooeCoIndicators === 'function')
+                    ? getMooeCoIndicators(item)
+                    : {
+                        mooe: (item.expense_class === 'MOOE' ? 'Yes' : (item.expense_class === 'CO' ? 'No' : 'N/A')),
+                        co: (item.expense_class === 'CO' ? 'Yes' : (item.expense_class === 'MOOE' ? 'No' : 'N/A'))
+                    };
+
                 rows.push({
                     code: item.reference_no || '',
                     title: item.project_description || '',
@@ -230,8 +237,9 @@
                     award: item.notice_of_award_date,
                     end: item.end_date,
                     fund: item.fund_source || '',
-                    cls: expenseClass(item),
                     amount: budgetOf(item),
+                    mooe: indicators.mooe,
+                    co: indicators.co,
                     remarks: item.remarks || ''
                 });
             });

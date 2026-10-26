@@ -344,6 +344,16 @@
                             <p class="field-error-msg">This field is required</p>
                         </div>
                     </div>
+                    <div class="field-group" data-field="expense_class">
+                        <label for="expense_class">Budget Classification <span class="required">*</span></label>
+                        <select id="expense_class" name="expense_class">
+                            <option value="">Select...</option>
+                            <option value="MOOE">MOOE</option>
+                            <option value="CO">CO</option>
+                            <option value="N/A">N/A</option>
+                        </select>
+                        <p class="field-error-msg">Please select a budget classification.</p>
+                    </div>
                 </form>
                 <div class="footer-actions">
                     <button class="back-btn" onclick="showStep1()">&larr; Back</button>
@@ -490,6 +500,7 @@
     <script src="scripts/dashboard-logic.js"></script>
     <script src="scripts/request-modal.js"></script>
     <script src="scripts/pdf-generator.js"></script>
+    <script src="scripts/entries-export.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>

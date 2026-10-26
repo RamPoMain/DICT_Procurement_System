@@ -484,6 +484,22 @@ function getRecordTotalBudget(record) {
     return calculateDeduplicatedBudget(getRecordItems(record));
 }
 
+/**
+ * Resolves the MOOE and CO cell indicators (Yes, No, or N/A)
+ * based on the user's selected expense_class.
+ */
+function getMooeCoIndicators(item) {
+    const raw = typeof item === 'string' ? item : (item && item.expense_class);
+    const cls = String(raw || '').trim().toUpperCase();
+    if (cls === 'MOOE') {
+        return { mooe: 'Yes', co: 'No' };
+    } else if (cls === 'CO') {
+        return { mooe: 'No', co: 'Yes' };
+    } else {
+        return { mooe: 'N/A', co: 'N/A' };
+    }
+}
+
 
 function getRecordDescriptionSummary(record) {
     const items = getRecordItems(record);
@@ -1004,7 +1020,6 @@ function buildEditableItemRow(record, item, showRef) {
     const rid = Number(record.id);
     const iid = item.id;
 
-    // DEFINING isFailedBidding for this table row:
     const isFailedBidding = item.mode === 'Negotiated Procurement – Two Failed Biddings' ||
         (item.remarks && String(item.remarks).includes('Two Failed Biddings'));
 
@@ -1012,7 +1027,6 @@ function buildEditableItemRow(record, item, showRef) {
         `<optgroup label="${escapeHtml(group.label)}">${selectOptionsHtml(group.options, item.mode)}</optgroup>`
     ).join('');
 
-    // If it's a failed-bidding row, render a LOCKED/DISABLED input instead of a dropdown:
     const modeHtml = isFailedBidding
         ? `<input type="text" class="ep-input" value="Negotiated Procurement – Two Failed Biddings" readonly disabled style="background:#f3f4f6; cursor:not-allowed; font-weight:600; color:#374151;" title="Locked: Automated under RA 12009 Sec. 33 (Two Failed Biddings)">
            <input type="hidden" data-record-id="${rid}" data-item-id="${iid}" data-field="mode" value="Negotiated Procurement – Two Failed Biddings">`
@@ -1021,7 +1035,6 @@ function buildEditableItemRow(record, item, showRef) {
                ${modeOptionsHtml}
            </select>`;
 
-    // If it's a failed-bidding row, render a LOCKED "Negotiated" criteria input:
     const critHtml = isFailedBidding
         ? `<input type="text" class="ep-input" value="Negotiated" readonly disabled style="background:#f3f4f6; cursor:not-allowed; font-weight:600; color:#374151;" title="Locked: Negotiated criteria">
            <input type="hidden" data-record-id="${rid}" data-item-id="${iid}" data-field="bid_evaluation_criteria" value="Negotiated">`
@@ -1052,12 +1065,6 @@ function buildEditableItemRow(record, item, showRef) {
             <!-- Col 1: Description -->
             <td><textarea class="ep-input" rows="2" data-record-id="${rid}" data-item-id="${iid}" data-field="project_description" oninput="onPreviewFieldInput(this)" placeholder="Describe the project...">${escapeHtml(item.project_description || '')}</textarea></td>
             
-            <!-- PAP Code: the entry's reference number (assigned automatically on first save, not editable) -->
-            <td class="ep-cs-col">${item.reference_no ? renderEntryRefBadge(item) : '<span class="ep-none">Assigned on save</span>'}</td>
-
-            <!-- Object: typed by hand -->
-            <td class="ep-cs-col"><input type="text" class="ep-input" inputmode="numeric" maxlength="10" data-record-id="${rid}" data-item-id="${iid}" data-field="object_name" value="${escapeHtml(item.object_name || '')}" oninput="onPreviewFieldInput(this)" placeholder="Object Code"></td>
-
             <!-- Col 2: Project Type -->
             <td><select class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="project_type" onchange="onPreviewFieldInput(this)">
                 <option value=""${!item.project_type ? ' selected' : ''}>Select...</option>
@@ -1067,7 +1074,7 @@ function buildEditableItemRow(record, item, showRef) {
             <!-- Col 3: Quantity & Size -->
             <td><textarea class="ep-input" rows="2" data-record-id="${rid}" data-item-id="${iid}" data-field="quantity_size" oninput="onPreviewFieldInput(this)" placeholder="Quantity and size...">${escapeHtml(item.quantity_size || '')}</textarea></td>
             
-            <!-- Col 4: Mode of Procurement (Locked if failed bidding) -->
+            <!-- Col 4: Mode of Procurement -->
             <td>${modeHtml}</td>
             
             <!-- Col 5: Pre-Procurement -->
@@ -1076,54 +1083,54 @@ function buildEditableItemRow(record, item, showRef) {
                 ${selectOptionsHtml(['No', 'Yes'], item.pre_procurement)}
             </select></td>
             
-            <!-- Col 6: Criteria for Bid Evaluation (Locked if failed bidding) -->
+            <!-- Col 6: Criteria for Bid Evaluation -->
             <td>${critHtml}</td>
             
-            <!-- Col 7: Start Date -->
+            <!-- Col 7: Start Date (Advertisement/Posting) -->
             <td><input type="date" class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="start_date" min="2000-01-01" max="2100-12-31" value="${escapeHtml(item.start_date || '')}" oninput="onPreviewFieldInput(this)"></td>
             
-            <!-- Submission/Opening of Bids -->
+            <!-- Col 8: Submission/Opening of Bids -->
             <td><input type="date" class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="bid_opening_date" min="${escapeHtml(previewDateFloor(item, 'bid_opening_date'))}" max="2100-12-31" value="${escapeHtml(item.bid_opening_date || '')}" oninput="onPreviewFieldInput(this)"></td>
 
-            <!-- Notice of Award -->
+            <!-- Col 9: Notice of Award -->
             <td><input type="date" class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="notice_of_award_date" min="${escapeHtml(previewDateFloor(item, 'notice_of_award_date'))}" max="2100-12-31" value="${escapeHtml(item.notice_of_award_date || '')}" oninput="onPreviewFieldInput(this)"></td>
 
-            <!-- Col 8: End Date (Contract Signing) -->
+            <!-- Col 10: Contract Signing (End Date) -->
             <td><input type="date" class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="end_date" min="${escapeHtml(previewDateFloor(item, 'end_date'))}" max="2100-12-31" value="${escapeHtml(item.end_date || '')}" oninput="onPreviewFieldInput(this)"></td>
             
-            <!-- Col 9: Delivery Period -->
+            <!-- Col 11: Delivery Period -->
             <td><input type="date" class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="delivery_period" min="${escapeHtml(item.end_date ? previewNextDay(item.end_date) : '2000-01-01')}" max="2100-12-31" value="${escapeHtml(item.delivery_period || '')}" oninput="onPreviewFieldInput(this)"></td>
             
-            <!-- Col 10: Fund Source -->
+            <!-- Col 12: Fund Source -->
             <td><input type="text" class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="fund_source" value="${escapeHtml(item.fund_source || '')}" oninput="onPreviewFieldInput(this)" placeholder="Source of funds"></td>
             
-            <!-- Col 11: Budget -->
+            <!-- Col 13: Budget -->
             <td><input type="text" class="ep-input ep-budget" data-record-id="${rid}" data-item-id="${iid}" data-field="budget" value="${escapeHtml(item.budget || '')}" oninput="onPreviewFieldInput(this)" placeholder="0.00" inputmode="decimal" autocomplete="off"></td>
             
-            <!-- Col 12: Procurement Strategies & Tools -->
+            <!-- Col 14: Procurement Strategies & Tools -->
             <td style="min-width: 220px; width: 220px; vertical-align: top;">
                 <div class="ep-strategies-box" data-record-id="${rid}" data-item-id="${iid}" style="min-width: 210px; width: 100%; max-height: 110px; overflow-y: auto; overflow-x: hidden; padding: 6px 8px; background: #fff; border: 1px solid #c7c7c7; border-radius: 4px; box-sizing: border-box;">
                     ${strategiesHtml}
                 </div>
             </td>
             
-            <!-- Col 13: Attached Supporting Documents -->
+            <!-- Col 15: Attached Supporting Documents -->
             <td class="ep-doc-cell" data-record-id="${rid}" data-item-id="${iid}" style="min-width: 180px; width: 180px; vertical-align: top;">
                 <div class="ep-doc-cell-body" style="font-size: 10.5px; line-height: 1.4; word-break: break-word; color: #374151;">
                     ${docsDisplay}
                 </div>
             </td>
             
-            <!-- Col 14: General Requirements -->
+            <!-- Col 16: General Requirements -->
             <td><select class="ep-input" data-record-id="${rid}" data-item-id="${iid}" data-field="general_requirements" onchange="onPreviewFieldInput(this)">
                 <option value=""${!item.general_requirements ? ' selected' : ''}>None / Not applicable</option>
                 ${selectOptionsHtml(PREVIEW_GENERAL_REQUIREMENT_OPTIONS, item.general_requirements)}
             </select></td>
             
-            <!-- Col 15: Remarks -->
+            <!-- Col 17: Remarks -->
             <td><textarea class="ep-input" rows="2" data-record-id="${rid}" data-item-id="${iid}" data-field="remarks" oninput="onPreviewFieldInput(this)" placeholder="Remarks">${escapeHtml(item.remarks || '')}</textarea></td>
             
-            <!-- Col 16: Actions (Remove) -->
+            <!-- Col 18: Actions (Remove) -->
             <td class="ep-remove-cell">
                 <button type="button" class="ep-remove-btn" title="Remove this item" onclick="removePreviewItem(${rid}, ${iid})">
                     <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6L18 18M18 6L6 18" stroke-linecap="round"/></svg>
@@ -1239,6 +1246,33 @@ function downloadBlobAs(url, fileName) {
     document.body.removeChild(a);
 }
 
+/**
+ * Safe trigger for PPMP Excel export:
+ * Automatically loads entries-export.js if it's not already on the page.
+ */
+async function triggerPpmpExcelExport(recordId) {
+    if (typeof exportPPMP_Excel !== 'function') {
+        try {
+            await new Promise(function (resolve, reject) {
+                var s = document.createElement('script');
+                s.src = 'entries-export.js';
+                s.onload = resolve;
+                s.onerror = function () { reject(new Error('Could not load entries-export.js')); };
+                document.head.appendChild(s);
+            });
+        } catch (err) {
+            if (typeof showToast === 'function') {
+                showToast('Could not load export script. Check entries-export.js path.');
+            }
+            return;
+        }
+    }
+
+    if (typeof exportPPMP_Excel === 'function') {
+        exportPPMP_Excel(recordId);
+    }
+}
+
 // The "Attached Supporting Documents" cell: one row per file, name opens it,
 // arrow downloads it. A file with no stored contents shows as plain text.
 function renderPreviewDocs(item, recordId) {
@@ -1278,15 +1312,22 @@ function renderPreviewList(values) {
         '</ul>';
 }
 
+function getMooeCoIndicators(item) {
+    const raw = typeof item === 'string' ? item : (item && item.expense_class);
+    const cls = String(raw || '').trim().toUpperCase();
+    if (cls === 'MOOE') {
+        return { mooe: 'Yes', co: 'No' };
+    } else if (cls === 'CO') {
+        return { mooe: 'No', co: 'Yes' };
+    } else {
+        return { mooe: 'N/A', co: 'N/A' };
+    }
+}
 
 function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRef = false) {
     const isIndicative = record.is_indicative === 'Indicative';
     const isFinal = record.is_indicative === 'Final';
     const items = editable ? ensurePreviewDraft(record).items : getRecordItems(record);
-    // Criteria for Bid Evaluation (col 6) and Procurement Strategies (col 12)
-    // are only shown while the PPMP is still a Draft. Once it is submitted for
-    // approval they are hidden here and only appear in the APP. The cells stay
-    // in the markup (class ep-cs-col) so the column-position CSS keeps working.
     const showCS = isPpmpDraft(record);
     const formattedTotal = formatPesoExact(
         calculateDeduplicatedBudget(items)
@@ -1304,8 +1345,6 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
         return `
             <tr class="ep-item-row" ${itemFilterAttrs(item, showCS)}>
                 <td>${escapeHtml(item.project_description || '')}</td>
-                <td class="ep-cs-col">${showCS ? renderEntryRefBadge(item) : ''}</td>
-                <td class="ep-cs-col">${showCS ? escapeHtml(item.object_name || '') : ''}</td>
                 <td>${escapeHtml(item.project_type || '')}</td>
                 <td>${escapeHtml(item.quantity_size || '')}</td>
                 <td>${escapeHtml(item.mode || '')}</td>
@@ -1318,7 +1357,7 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
                 <td>${escapeHtml(item.delivery_period || '')}</td>
                 <td>${escapeHtml(item.fund_source || '')}</td>
                 <td>${escapeHtml(formatPesoExact(parseBudgetNumber(item.budget)))}</td>
-                <td class="ep-cs-col">${showCS ? itemStrategies : ''}</td>
+                <td class="ep-cs-col" style="text-align: center;">${showCS ? itemStrategies : ''}</td>
                 <td>${attachedDocs}</td>
                 <td>${escapeHtml(item.general_requirements || '')}</td>
                 <td>${escapeHtml(item.remarks || '')}</td>
@@ -1348,7 +1387,7 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
                 <table class="excel-preview-table${showCS ? '' : ' ep-hide-cs'}">
                     <thead>
                         <tr>
-                            <th colspan="${showCS ? 8 : 5}">PROCUREMENT PROJECT DETAILS</th>
+                            <th colspan="${showCS ? 6 : 5}">PROCUREMENT PROJECT DETAILS</th>
                             <th colspan="5">PROJECTED TIMELINE (MM/YYYY)</th>
                             <th colspan="2">FUNDING DETAILS</th>
                             <th rowspan="2" class="ep-cs-col">PROCUREMENT STRATEGIES AND TOOLS</th>
@@ -1359,8 +1398,6 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
                         </tr>
                         <tr>
                             <th>General Description and Objective of the Project to be Procured</th>
-                            <th class="ep-cs-col">PAP Code</th>
-                            <th class="ep-cs-col">Object Code</th>
                             <th>Type of the Project to be Procured</th>
                             <th>Quantity and Size of the Project to be Procured</th>
                             <th>Recommended Mode of Procurement</th>
@@ -1376,11 +1413,9 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
                         </tr>
                         <tr>
                             ${(() => {
-                                // Number only the visible columns so hiding two leaves no gap.
                                 let shown = 0;
-                                return Array.from({ length: 19 }, (_, i) => {
-                                    // PAP Code (2), Object (3), Criteria (8) and Strategies (16)
-                                    const isCS = [2, 3, 8, 16].indexOf(i + 1) !== -1;
+                                return Array.from({ length: 17 }, (_, i) => {
+                                    const isCS = (i + 1 === 6 || i + 1 === 14);
                                     if (isCS && !showCS) return '<th class="ep-cs-col"></th>';
                                     shown += 1;
                                     return '<th>Column ' + shown + '</th>';
@@ -1391,9 +1426,9 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
                     </thead>
                     <tbody>
                         ${itemRows}
-                        ${editable ? '' : `<tr class="ep-filter-empty hidden"><td colspan="${showCS ? 19 : 15}">No items match the current filters.</td></tr>`}
+                        ${editable ? '' : `<tr class="ep-filter-empty hidden"><td colspan="${showCS ? 17 : 15}">No items match the current filters.</td></tr>`}
                         <tr>
-                            <td colspan="${showCS ? 14 : 11}" class="excel-total-label">TOTAL BUDGET:</td>
+                            <td colspan="${showCS ? 12 : 11}" class="excel-total-label">TOTAL BUDGET:</td>
                             <td class="excel-total-value">${escapeHtml(formattedTotal)}</td>
                             <td class="ep-cs-col"></td>
                             <td></td>
@@ -1402,7 +1437,7 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
                             ${editable ? '<td></td>' : ''}
                         </tr>
                         ${editable ? '' : `<tr class="ep-filter-subtotal hidden">
-                            <td colspan="${showCS ? 14 : 11}" class="excel-total-label ep-filter-subtotal-label"></td>
+                            <td colspan="${showCS ? 12 : 11}" class="excel-total-label ep-filter-subtotal-label"></td>
                             <td class="excel-total-value ep-filter-subtotal-value"></td>
                             <td class="ep-cs-col"></td>
                             <td></td>
@@ -1411,7 +1446,7 @@ function buildExcelPreviewMarkup(record, editable, showSignatures = true, showRe
                         </tr>`}
                         ${editable ? `
                         <tr class="ep-add-row">
-                            <td colspan="20">
+                            <td colspan="18">
                                 <button type="button" class="ep-add-btn" onclick="addPreviewItem(${Number(record.id)})">
                                     <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5V19M5 12H19" stroke-linecap="round"/></svg>
                                     Add Item
@@ -1490,6 +1525,15 @@ function renderExcelPreviewOverlay(record) {
                     <p>PPMP No. ${escapeHtml(record.ppmp_no || 'N/A')}</p>
                 </div>
                 <div class="excel-preview-actions">
+                <!-- DOWNLOAD STYLED EXCEL (.xlsx) BUTTON -->
+                    <button type="button" class="db-action-btn" title="Download Excel (.xlsx)" onclick="triggerPpmpExcelExport(${Number(record.id)})" style="background:#10b981; color:#fff; border-color:#10b981;">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        <span style="font-size:12px; margin-left:4px;">Export Excel</span>
+                    </button>
                     <button type="button" class="db-action-btn" title="Open Full Request" onclick="openEntryRecord(${Number(record.id)})">
                         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                     </button>
