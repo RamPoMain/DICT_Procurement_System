@@ -69,7 +69,7 @@ export default function Dashboard() {
 
       <main className="db-main">
         <div className="db-header-banner">
-          <img src="/public/images/header-banner.png" alt="DICT Banner" />
+          <img src="/images/header-banner.png" alt="DICT Banner" />
         </div>
 
         <div className="db-topbar">
@@ -83,12 +83,31 @@ export default function Dashboard() {
             </button>
           </div>
         </div>
-
+        {/* Welcome card with New Request button */}
+<div className="db-welcome-card">
+  <div>
+    <h2>Good day, {user?.roleName}!</h2>
+    <p>Here's a quick look at your procurement requests and activity.</p>
+  </div>
+  {user?.canRequest && (
+    <button
+      type="button"
+      className="db-new-request-btn"
+      onClick={() => { setSelectedRecordId(null); setModalOpen(true); }}
+    >
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+        <line x1="12" y1="5" x2="12" y2="19" />
+        <line x1="5" y1="12" x2="19" y2="12" />
+      </svg>
+      New Request
+    </button>
+  )}
+</div>
         {/* Stats Grid */}
         <div className="db-stats-grid">
           <div className="db-stat-card db-stat-blue">
             <div className="db-stat-head">
-              <span className="db-stat-label">{isSupplier ? 'Total APP Versions' : 'Total PPMP Requests'}</span>
+              <span className="db-stat-label">{isSupplier ? 'Total APP Versions' : 'Total PPMP Versions'}</span>
             </div>
             <p className="db-stat-value">{totalRequests}</p>
           </div>

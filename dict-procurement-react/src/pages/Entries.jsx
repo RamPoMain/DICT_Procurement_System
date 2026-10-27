@@ -58,9 +58,7 @@ export default function Entries() {
             <p className="db-subtitle">Consolidated view of all requests and compiled plans</p>
           </div>
           <div className="db-topbar-actions">
-            <button type="button" className="db-btn is-secondary" onClick={() => exportEntriesExcel(filteredRecords)}>
-              Export All to Excel (.xlsx)
-            </button>
+            
             {user?.role === 'SUP' && (
               <button type="button" className="db-btn is-secondary" onClick={() => exportAppTemplateExcel(new Date().getFullYear(), user)}>
                 Export APP Template (.xlsx)

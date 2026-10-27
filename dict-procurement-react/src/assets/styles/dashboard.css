@@ -2380,3 +2380,23 @@ html[data-theme="light"] .modal-status-badge.is-returned { color: #B91C1C; }
     white-space: nowrap;
 }
 .ep-ref + textarea { display: block; }
+
+.db-new-request-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    background: var(--db-accent);
+    color: #fff;
+    border: none;
+    padding: 11px 20px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.db-new-request-btn:hover { background: #2563EB; }
+.db-new-request-btn:active { transform: scale(0.98); }

@@ -9,6 +9,9 @@ export default function Sidebar({ onNewRequest }) {
   // Generate 2-letter initials for avatar (e.g., "IL", "FP", "TO", "RD")
   const initials = user?.role ? user.role.slice(0, 2).toUpperCase() : '??';
 
+
+  
+
   return (
     <>
       <aside className="db-sidebar">
