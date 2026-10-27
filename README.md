@@ -3,7 +3,10 @@
 [![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat&logo=vite&logoColor=white)](https://vitejs.dev/)
 [![React](https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB)](https://react.dev/)
 [![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=flat&logo=javascript&logoColor=black)](https://developer.mozilla.org/)
+<<<<<<< HEAD
 [![Status](https://img.shields.io/badge/Status-Internal%20Government%20Use-blue.svg)](#license)
+=======
+>>>>>>> d703a5171ffcb4016025f1cc3ee6f29e604d0af1
 
 A centralized web application developed for the **Department of Information and Communications Technology (DICT)** to prepare, manage, approve, and consolidate **Project Procurement Management Plans (PPMP)** and compile **Annual Procurement Plans (APP)** in compliance with Philippine procurement laws (**Republic Act No. 12009 — New Government Procurement Act**).
 
@@ -82,6 +85,7 @@ Ensure you have **Node.js (v18.0.0 or higher)** and **npm** installed on your sy
 ```bash
 node -v
 npm -v
+<<<<<<< HEAD
 ```
 
 ### Installation
@@ -186,3 +190,5 @@ dict-procurement-react/
 ├── package.json
 └── vite.config.js
 ```
+=======
+>>>>>>> d703a5171ffcb4016025f1cc3ee6f29e604d0af1
