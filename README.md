@@ -3,7 +3,6 @@
 [![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat&logo=vite&logoColor=white)](https://vitejs.dev/)
 [![React](https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB)](https://react.dev/)
 [![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=flat&logo=javascript&logoColor=black)](https://developer.mozilla.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A centralized web application developed for the **Department of Information and Communications Technology (DICT)** to prepare, manage, approve, and consolidate **Project Procurement Management Plans (PPMP)** and compile **Annual Procurement Plans (APP)** in compliance with Philippine procurement laws (**Republic Act No. 12009**).
 
