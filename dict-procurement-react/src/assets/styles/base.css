@@ -17,6 +17,12 @@ body {
   min-height: 100vh;
 }
 
+#root {
+  flex: 1;
+  min-width: 0;
+  display: flex;        /* so page wrappers inside can stretch */
+  flex-direction: column;
+}
 
 /* SIDEBAR SYSTEM */
 .sidebar {
