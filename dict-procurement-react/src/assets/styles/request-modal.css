@@ -815,3 +815,84 @@
 [data-theme="dark"] #requestModalOverlay #page-title {
     color: #F8FAFC !important;
 }
+
+/* =========================================
+   REQUEST FORM (React) - layout, steps 1-3
+   ========================================= */
+
+/* Two-column step 1 layout */
+.db-modal .form-col { display: flex; flex-direction: column; min-width: 0; }
+@media (max-width: 760px) { .db-modal .form-grid { grid-template-columns: 1fr; gap: 0; } }
+
+/* Chevron on selects (drawn in CSS, no image asset needed) */
+.db-modal select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%238B94A8' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+}
+
+/* ===== Step 2: PHP-prefixed budget input ===== */
+.db-modal .budget-wrap {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 13px; border-radius: 9px;
+  border: 1px solid var(--db-field-border, #d2d5da);
+  background: var(--db-card-alt, #f9fafb);
+}
+.db-modal .budget-wrap:focus-within { border-color: var(--db-accent, #3B82F6); }
+#requestModalOverlay .db-modal .budget-wrap input {
+  border: none !important; background: transparent !important; box-shadow: none !important; padding-left: 0;
+}
+
+/* ===== Step 3: strategies multi-select ===== */
+.db-modal .strategy-wrap { position: relative; }
+.db-modal .select-box {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  min-height: 44px; padding: 8px 40px 8px 13px;
+  border-radius: 9px; font-size: 14px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%238B94A8' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 14px center;
+}
+.db-modal .options-list {
+  position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px;
+  z-index: 30; max-height: 220px; overflow-y: auto; border-radius: 9px;
+}
+.db-modal .option { padding: 10px 13px; font-size: 13.5px; cursor: pointer; }
+.db-modal .tag { padding: 3px 9px; border-radius: 6px; font-size: 12px; }
+
+/* ===== Step 3: upload zone + file list (fallbacks if step3.css doesn't define them) ===== */
+.db-modal .upload-zone {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 28px 16px; text-align: center; cursor: pointer;
+  border: 2px dashed var(--db-accent, #3B82F6); border-radius: 10px;
+}
+.db-modal .upload-zone small { font-size: 11px; opacity: 0.75; }
+.db-modal .upload-link { color: #0088ff; font-weight: 600; }
+.db-modal .uploaded-file-list { list-style: none; margin: 10px 0 0; padding: 0; }
+.db-modal .uploaded-file-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px; border-radius: 8px; margin-top: 8px; font-size: 13px;
+}
+.db-modal .uploaded-file-info { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-modal .remove-doc-btn { background: none; border: none; color: #ef4444; font-size: 12px; font-weight: 600; cursor: pointer; }
+
+/* ===== Step 2 fixes: PHP prefix + date icon ===== */
+
+/* Keep the "PHP" label inside the budget box (an older .prefix rule positions it absolutely) */
+.db-modal .budget-wrap { position: relative; }
+.db-modal .budget-wrap .prefix {
+  position: static; inset: auto; transform: none;
+  margin: 0; padding: 0; flex-shrink: 0; font-size: 13px; font-weight: 600;
+}
+.db-modal .budget-wrap input {
+  border: none; background: transparent; box-shadow: none;
+  padding: 12px 0; flex: 1; min-width: 0;
+}
+.db-modal .budget-wrap input:focus { border: none; box-shadow: none; }
+
+/* Calendar icon on the left of date inputs (inline SVG, so no image path can break) */
+.db-modal input[type="date"] {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%238B94A8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cline x1='16' y1='2' x2='16' y2='6'/%3E%3Cline x1='8' y1='2' x2='8' y2='6'/%3E%3Cline x1='3' y1='10' x2='21' y2='10'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 14px center;
+  padding-left: 44px;
+}

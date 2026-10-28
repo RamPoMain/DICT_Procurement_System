@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext.jsx';
 import {
   parseBudgetNumber,
@@ -14,7 +14,43 @@ import {
 } from '../../utils/procurementRules.js';
 import FileStore from '../../utils/fileStore.js';
 
-export default function RequestModal({ isOpen, onClose, recordId = null, onSaved }) {
+// NOTE: the original form keeps these options in its HTML (not in the JS), so this is a
+// placeholder list. Replace it with the exact <option> values from your original page.
+// 'Negotiated' is added automatically when two failed biddings lock the mode.
+const BID_CRITERIA_OPTIONS = [
+  'Lowest Calculated Responsive Bid (LCRB)',
+  'Most Economically Advantageous Responsive Bid (MEARB)',
+  'Quality-Based Evaluation (QBE)',
+  'Quality-Cost Based Evaluation (QCBE)',
+  'Fixed Budget Selection (FBS)',
+  'Least-Cost Selection (LCS)',
+  'N/A'
+];
+
+// NOTE: these three lists live in the original HTML, so they are best-effort placeholders.
+// The strategy list starts with the three seen in your original screenshot - replace/extend
+// it with the exact options from your original page.
+const STRATEGY_OPTIONS = [
+  'Multi-Year Contracting',
+  'Subcontracting',
+  'Life Cycle Assessment (LCA) and LCCA',
+  'Framework Agreement',
+  'Early Procurement Activities',
+  'N/A'
+];
+const GENERAL_REQ_OPTIONS = ['General Requirements', 'Miscellaneous', 'Common Supplies and Equipment'];
+const EXPENSE_CLASS_OPTIONS = ['MOOE', 'CO', 'N/A'];
+const PROJECT_TYPE_DOC_LABELS = {
+  'Goods': 'Technical Specifications',
+  'Consulting Services': 'Terms of Reference',
+  'Infrastructure': 'Scope of Work'
+};
+const MAX_FILE_SIZE = 10 * 1024 * 1024;   // 10MB per file
+const MAX_TOTAL_SIZE = 50 * 1024 * 1024;  // 50MB total per item
+const formatFileSize = (b) => b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
+const STEP_PROGRESS = [15, 45, 85];
+
+export default function RequestModal({ isOpen, onClose, recordId = null, onSaved, onBulkImport }) {
   const { user } = useAuth();
   const [step, setStep] = useState(1);
   const [isViewMode, setIsViewMode] = useState(false);
@@ -31,6 +67,9 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   const [activeItem, setActiveItem] = useState(createBlankItem());
   const [errors, setErrors] = useState({});
   const [failedBiddingWarning, setFailedBiddingWarning] = useState('');
+  const [stratOpen, setStratOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef(null);
 
   function createBlankItem() {
     return {
@@ -39,7 +78,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
       object_name: '',
       project_type: '',
       mode: '',
-      pre_procurement: 'No',
+      pre_procurement: '',
       bid_evaluation_criteria: '',
       quantity_size: '',
       start_date: '',
@@ -52,13 +91,22 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
       expense_class: 'N/A',
       strategies: [],
       remarks: '',
+      general_requirements: '',
       supporting_documents: []
     };
+  }
+
+  // Next PPMP number for this office + fiscal year (shown read-only on a new request)
+  function nextPpmpNo(fy) {
+    const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const n = all.filter(r => r.end_user === user?.office && String(r.fiscal_year) === String(fy)).length + 1;
+    return String(n);
   }
 
   useEffect(() => {
     if (!isOpen) return;
     setStep(1);
+    setStratOpen(false);
     setErrors({});
     if (recordId) {
       const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
@@ -83,7 +131,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
       setItemIdx(0);
       setActiveItem(fresh);
       setHeaderData({
-        ppmp_no: 'Auto',
+        ppmp_no: nextPpmpNo(new Date().getFullYear().toString()),
         fiscal_year: new Date().getFullYear().toString(),
         end_user: user?.office || '',
         is_indicative: 'Indicative'
@@ -122,6 +170,8 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
       if (!activeItem.project_type) errs.project_type = 'Select a Project Type';
       if (!activeItem.mode) errs.mode = 'Select a Procurement Mode';
       if (!activeItem.quantity_size) errs.quantity_size = 'Quantity and size required';
+      if (!activeItem.pre_procurement) errs.pre_procurement = 'This field is required.';
+      if (!activeItem.bid_evaluation_criteria) errs.bid_evaluation_criteria = 'This field is required.';
 
       // Shopping / Repeat Order Goods check
       if (['Shopping', 'Repeat Order'].includes(activeItem.mode) && activeItem.project_type !== 'Goods') {
@@ -151,15 +201,24 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
       if (activeItem.end_date && activeItem.delivery_period && activeItem.delivery_period <= activeItem.end_date) {
         errs.delivery_period = 'Delivery Period must be strictly after Contract Signing';
       }
+
+      // Funding (these fields moved to step 2 to match the original form)
+      if (!activeItem.fund_source) errs.fund_source = 'This field is required.';
+      const b = parseBudgetNumber(activeItem.budget);
+      if (!b || b <= 0) {
+        errs.budget = 'Budget must be greater than 0';
+      } else if (activeItem.mode !== 'Negotiated Procurement – Two Failed Biddings') {
+        if (isBracketMismatch(activeItem.mode, b)) errs.budget = budgetBracketMessage(activeItem.mode, b);
+        else if (exceedsModeCeiling(activeItem.mode, b)) errs.budget = `Exceeds allowable budget for ${activeItem.mode}`;
+      }
+      if (!EXPENSE_CLASS_OPTIONS.includes(activeItem.expense_class)) {
+        errs.expense_class = 'Please select whether the budget is MOOE, CO, or N/A.';
+      }
     }
     if (step === 3) {
-      const b = parseBudgetNumber(activeItem.budget);
-      if (!b || b <= 0) errs.budget = 'Budget must be greater than 0';
-      if (isBracketMismatch(activeItem.mode, b)) errs.budget = budgetBracketMessage(activeItem.mode, b);
-      if (exceedsModeCeiling(activeItem.mode, b)) errs.budget = `Exceeds allowable budget for ${activeItem.mode}`;
-      if (!activeItem.fund_source) errs.fund_source = 'Source of Funds is required';
-      if (!activeItem.remarks) errs.remarks = 'Remarks are required';
-      if (!activeItem.supporting_documents?.length) errs.supporting_documents = 'At least one supporting document required';
+      if (!activeItem.strategies?.length) errs.strategies = 'Please select at least one procurement strategy.';
+      if (!activeItem.remarks?.trim()) errs.remarks = 'This field is required.';
+      if (!activeItem.supporting_documents?.length) errs.supporting_documents = 'Please upload at least one supporting document.';
     }
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -207,28 +266,80 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     onClose();
   };
 
-  const handleFileUpload = async (e) => {
-    const files = Array.from(e.target.files || []);
-    for (const file of files) {
-      const fileId = FileStore.newId();
-      await FileStore.put(fileId, file);
-      setActiveItem(prev => ({
-        ...prev,
-        supporting_documents: [...prev.supporting_documents, { name: file.name, size: file.size, type: file.type, fileId }]
-      }));
+  const clearError = (key) => setErrors(e => { const { [key]: _removed, ...rest } = e; return rest; });
+
+  const addFiles = async (fileList) => {
+    const incoming = Array.from(fileList || []);
+    let total = (activeItem.supporting_documents || []).reduce((s, d) => s + (d.size || 0), 0);
+    for (const file of incoming) {
+      if (file.size > MAX_FILE_SIZE) {
+        setErrors(e => ({ ...e, supporting_documents: `"${file.name}" is ${formatFileSize(file.size)}, which is over the ${formatFileSize(MAX_FILE_SIZE)} per-file limit. Please attach a smaller file.` }));
+        continue;
+      }
+      if (total + file.size > MAX_TOTAL_SIZE) {
+        setErrors(e => ({ ...e, supporting_documents: `Adding "${file.name}" would exceed the ${formatFileSize(MAX_TOTAL_SIZE)} total attachment limit for this request.` }));
+        continue;
+      }
+      try {
+        const fileId = FileStore.newId();
+        await FileStore.put(fileId, file);
+        total += file.size;
+        clearError('supporting_documents');
+        setActiveItem(prev => ({
+          ...prev,
+          supporting_documents: [...prev.supporting_documents, { name: file.name, size: file.size, type: file.type, fileId }]
+        }));
+      } catch {
+        setErrors(e => ({ ...e, supporting_documents: `The file "${file.name}" could not be stored in this browser (storage may be full).` }));
+      }
     }
   };
 
+  const removeDoc = (idx) => {
+    setActiveItem(prev => ({ ...prev, supporting_documents: prev.supporting_documents.filter((_, i) => i !== idx) }));
+  };
+
+  // Selecting N/A clears every other strategy; picking a real one clears N/A (as in the original form)
+  const toggleStrategy = (s) => {
+    const cur = activeItem.strategies || [];
+    let next;
+    if (s === 'N/A') next = cur.includes('N/A') ? [] : ['N/A'];
+    else {
+      const base = cur.filter(x => x !== 'N/A');
+      next = base.includes(s) ? base.filter(x => x !== s) : [...base, s];
+    }
+    setActiveItem({ ...activeItem, strategies: next });
+    if (next.length) clearError('strategies');
+  };
+
+  const dateField = (key, label) => (
+    <div className={`field-group ${errors[key] ? 'error-state' : ''}`}>
+      <label>{label}</label>
+      <input type="date" value={activeItem[key]} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, [key]: e.target.value })} />
+      {errors[key] && <p className="text-45">{errors[key]}</p>}
+    </div>
+  );
+
+  const docLabel = PROJECT_TYPE_DOC_LABELS[activeItem.project_type];
+  const docs = activeItem.supporting_documents || [];
+
   return (
-    <div className="db-modal-overlay">
+    <div className="db-modal-overlay" id="requestModalOverlay">
       <div className="db-modal">
+        {!isViewMode && (
+          <div className="db-modal-header-actions">
+            <button type="button" className="db-modal-pdf-btn" onClick={() => onBulkImport && onBulkImport()}>
+              &#8593; Bulk import
+            </button>
+          </div>
+        )}
         <button type="button" className="db-modal-close" onClick={onClose}>&times;</button>
 
         <div className="title-tab-wrapper">
           <span className="text-9">
             {step === 1 && 'PROCUREMENT PROJECT DETAILS'}
             {step === 2 && 'PROJECTED TIMELINE'}
-            {step === 3 && 'FUNDING & ATTACHMENTS'}
+            {step === 3 && 'FUNDING DETAILS'}
           </span>
         </div>
 
@@ -240,6 +351,10 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
           </div>
         )}
 
+        <div className="track-4" style={{ maxWidth: 520, margin: '0 auto 22px' }}>
+          <div className="filled-5" style={{ width: `${STEP_PROGRESS[step - 1]}%` }} />
+        </div>
+
         {failedBiddingWarning && (
           <div style={{ padding: '8px 12px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: 8, marginBottom: 14, fontSize: 12 }}>
             {failedBiddingWarning}
@@ -248,112 +363,267 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
 
         {step === 1 && (
           <div className="form-grid">
-            <div className="field-group">
-              <label>Fiscal Year</label>
-              <input type="text" value={headerData.fiscal_year} disabled={isViewMode} onChange={e => setHeaderData({ ...headerData, fiscal_year: e.target.value })} />
+            {/* LEFT COLUMN */}
+            <div className="form-col">
+              <div className="field-group">
+                <label>PPMP Number</label>
+                <input type="text" value={headerData.ppmp_no} readOnly />
+              </div>
+
+              <div className={`field-group ${errors.project_description ? 'error-state' : ''}`}>
+                <label>General Description and Objective</label>
+                <textarea
+                  placeholder="Enter the objective of the project..."
+                  value={activeItem.project_description}
+                  disabled={isViewMode}
+                  onChange={e => setActiveItem({ ...activeItem, project_description: e.target.value })}
+                />
+                {errors.project_description && <p className="text-45">{errors.project_description}</p>}
+              </div>
+
+              <div className={`field-group ${errors.object_name ? 'error-state' : ''}`}>
+                <label>Object Code</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="e.g. 5020301002"
+                  value={activeItem.object_name}
+                  disabled={isViewMode}
+                  onChange={e => setActiveItem({ ...activeItem, object_name: e.target.value.replace(/\D/g, '') })}
+                />
+                {errors.object_name && <p className="text-45">{errors.object_name}</p>}
+              </div>
+
+              <div className="field-group">
+                <label>Is Indicative or Final?</label>
+                <select value={headerData.is_indicative} disabled={isViewMode} onChange={e => setHeaderData({ ...headerData, is_indicative: e.target.value })}>
+                  <option value="Indicative">Indicative</option>
+                  <option value="Final">Final</option>
+                </select>
+              </div>
+
+              <div className="field-group">
+                <label>End-User or Implementing Unit</label>
+                <input type="text" value={headerData.end_user} readOnly />
+              </div>
+
+              <div className="field-group">
+                <label>Fiscal Year</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={4}
+                  placeholder={`e.g. ${new Date().getFullYear()}`}
+                  value={headerData.fiscal_year}
+                  disabled={isViewMode}
+                  onChange={e => {
+                    const fy = e.target.value.replace(/\D/g, '');
+                    setHeaderData({ ...headerData, fiscal_year: fy, ...(recordId ? {} : { ppmp_no: nextPpmpNo(fy) }) });
+                  }}
+                />
+              </div>
+
+              <div className={`field-group ${errors.project_type ? 'error-state' : ''}`}>
+                <label>Type of Project to be Procured</label>
+                <select value={activeItem.project_type} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, project_type: e.target.value })}>
+                  <option value="">Select...</option>
+                  <option value="Goods">Goods</option>
+                  <option value="Infrastructure">Infrastructure</option>
+                  <option value="Consulting Services">Consulting Services</option>
+                </select>
+                {errors.project_type && <p className="text-45">{errors.project_type}</p>}
+              </div>
             </div>
-            <div className="field-group">
-              <label>Type</label>
-              <select value={headerData.is_indicative} disabled={isViewMode} onChange={e => setHeaderData({ ...headerData, is_indicative: e.target.value })}>
-                <option value="Indicative">Indicative</option>
-                <option value="Final">Final</option>
-              </select>
-            </div>
-            <div className="field-group" style={{ gridColumn: 'span 2' }}>
-              <label>General Description</label>
-              <textarea value={activeItem.project_description} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, project_description: e.target.value })} />
-              {errors.project_description && <p className="text-45">{errors.project_description}</p>}
-            </div>
-            <div className="field-group">
-              <label>Object Code</label>
-              <input type="text" value={activeItem.object_name} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, object_name: e.target.value })} />
-              {errors.object_name && <p className="text-45">{errors.object_name}</p>}
-            </div>
-            <div className="field-group">
-              <label>Type of Project</label>
-              <select value={activeItem.project_type} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, project_type: e.target.value })}>
-                <option value="">Select...</option>
-                <option value="Goods">Goods</option>
-                <option value="Infrastructure">Infrastructure</option>
-                <option value="Consulting Services">Consulting Services</option>
-              </select>
-            </div>
-            <div className="field-group">
-              <label>Recommended Mode of Procurement</label>
-              <select value={activeItem.mode} disabled={isViewMode || !!failedBiddingWarning} onChange={e => setActiveItem({ ...activeItem, mode: e.target.value })}>
-                <option value="">Select...</option>
-                {Object.keys(PROCUREMENT_MODE_RULES).map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-              {errors.mode && <p className="text-45">{errors.mode}</p>}
-            </div>
-            <div className="field-group">
-              <label>Quantity and Size</label>
-              <input type="text" value={activeItem.quantity_size} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, quantity_size: e.target.value })} />
+
+            {/* RIGHT COLUMN */}
+            <div className="form-col">
+              <div className={`field-group ${errors.mode ? 'error-state' : ''}`}>
+                <label>Recommended Mode of Procurement</label>
+                <select value={activeItem.mode} disabled={isViewMode || !!failedBiddingWarning} onChange={e => setActiveItem({ ...activeItem, mode: e.target.value })}>
+                  <option value="">Select mode...</option>
+                  {Object.keys(PROCUREMENT_MODE_RULES).map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <p className="mode-hint">
+                  Recommended by budget: &le;&#8369;199,999 &rarr; Direct Acquisition &middot; &#8369;200,000&ndash;&#8369;1,999,999 &rarr; Small Value Procurement (SVP) &middot; &#8369;2,000,000 and above &rarr; Competitive Bidding
+                </p>
+                {errors.mode && <p className="text-45">{errors.mode}</p>}
+              </div>
+
+              <div className={`field-group ${errors.pre_procurement ? 'error-state' : ''}`}>
+                <label>Pre Procurement Conference?</label>
+                <select value={activeItem.pre_procurement} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, pre_procurement: e.target.value })}>
+                  <option value="">Select...</option>
+                  <option value="Yes">Yes</option>
+                  <option value="No">No</option>
+                </select>
+                {errors.pre_procurement && <p className="text-45">{errors.pre_procurement}</p>}
+              </div>
+
+              <div className={`field-group ${errors.bid_evaluation_criteria ? 'error-state' : ''}`}>
+                <label>Criteria for Bid Evaluation (Including Sustainability and Domestic Preference)</label>
+                <select
+                  value={activeItem.bid_evaluation_criteria}
+                  disabled={isViewMode || !!failedBiddingWarning}
+                  onChange={e => setActiveItem({ ...activeItem, bid_evaluation_criteria: e.target.value })}
+                >
+                  <option value="">Select Criteria for Bid Evaluation...</option>
+                  {BID_CRITERIA_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  {activeItem.bid_evaluation_criteria === 'Negotiated' && <option value="Negotiated">Negotiated</option>}
+                </select>
+                {errors.bid_evaluation_criteria && <p className="text-45">{errors.bid_evaluation_criteria}</p>}
+              </div>
+
+              <div className={`field-group ${errors.quantity_size ? 'error-state' : ''}`}>
+                <label>Quantity and Size of the Project</label>
+                <textarea
+                  placeholder="e.g. 10 units, 2 lots, 500 sq.m."
+                  value={activeItem.quantity_size}
+                  disabled={isViewMode}
+                  onChange={e => setActiveItem({ ...activeItem, quantity_size: e.target.value })}
+                />
+                {errors.quantity_size && <p className="text-45">{errors.quantity_size}</p>}
+              </div>
             </div>
           </div>
         )}
 
         {step === 2 && (
           <div className="form-grid">
-            <div className="field-group">
-              <label>Advertisement/Posting</label>
-              <input type="date" value={activeItem.start_date} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, start_date: e.target.value })} />
+            {/* LEFT COLUMN: timeline + budget classification */}
+            <div className="form-col">
+              {dateField('start_date', 'Advertisement/Posting of IB/REI (Start of Procurement Activity)')}
+              {dateField('bid_opening_date', 'Submission/Opening of Bids')}
+              {dateField('notice_of_award_date', 'Notice of Award')}
+              {dateField('end_date', 'Contract Signing (End of Procurement Activity)')}
+              {dateField('delivery_period', 'Expected Delivery/ Implementation Period')}
+
+              <div className={`field-group ${errors.expense_class ? 'error-state' : ''}`}>
+                <label>Budget Classification *</label>
+                <select value={activeItem.expense_class} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, expense_class: e.target.value })}>
+                  {EXPENSE_CLASS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+                {errors.expense_class && <p className="text-45">{errors.expense_class}</p>}
+              </div>
             </div>
-            <div className="field-group">
-              <label>Submission/Opening of Bids</label>
-              <input type="date" value={activeItem.bid_opening_date} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, bid_opening_date: e.target.value })} />
-              {errors.bid_opening_date && <p className="text-45">{errors.bid_opening_date}</p>}
-            </div>
-            <div className="field-group">
-              <label>Notice of Award</label>
-              <input type="date" value={activeItem.notice_of_award_date} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, notice_of_award_date: e.target.value })} />
-              {errors.notice_of_award_date && <p className="text-45">{errors.notice_of_award_date}</p>}
-            </div>
-            <div className="field-group">
-              <label>Contract Signing</label>
-              <input type="date" value={activeItem.end_date} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, end_date: e.target.value })} />
-              {errors.end_date && <p className="text-45">{errors.end_date}</p>}
-            </div>
-            <div className="field-group" style={{ gridColumn: 'span 2' }}>
-              <label>Expected Delivery Period</label>
-              <input type="date" value={activeItem.delivery_period} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, delivery_period: e.target.value })} />
-              {errors.delivery_period && <p className="text-45">{errors.delivery_period}</p>}
+
+            {/* RIGHT COLUMN: funding */}
+            <div className="form-col">
+              <div className={`field-group ${errors.fund_source ? 'error-state' : ''}`}>
+                <label>Source of Funds</label>
+                <input type="text" value={activeItem.fund_source} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, fund_source: e.target.value })} />
+                {errors.fund_source && <p className="text-45">{errors.fund_source}</p>}
+              </div>
+
+              <div className={`field-group ${errors.budget ? 'error-state' : ''}`}>
+                <label>Estimated Budget / Budgetary Allocation</label>
+                <div className="budget-wrap">
+                  <span className="prefix">PHP</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={activeItem.budget}
+                    disabled={isViewMode}
+                    onChange={e => setActiveItem({ ...activeItem, budget: e.target.value.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1') })}
+                  />
+                </div>
+                {errors.budget && <p className="text-45">{errors.budget}</p>}
+              </div>
             </div>
           </div>
         )}
 
         {step === 3 && (
-          <div className="form-grid">
+          <div className="step3-stack">
+            <div className={`field-group ${errors.strategies ? 'error-state' : ''}`}>
+              <label>Procurement Strategies and Tools</label>
+              <p className="mode-hint" style={{ margin: '0 0 8px' }}>Click to toggle one or more strategies:</p>
+              <div className="strategy-wrap">
+                <div className="select-box" onClick={() => !isViewMode && setStratOpen(o => !o)}>
+                  {(activeItem.strategies || []).length === 0
+                    ? <span className="placeholder">Select strategies...</span>
+                    : activeItem.strategies.map(s => <span key={s} className="tag">{s}</span>)}
+                </div>
+                {stratOpen && !isViewMode && (
+                  <div className="options-list">
+                    {STRATEGY_OPTIONS.map(s => (
+                      <div key={s} className={`option ${(activeItem.strategies || []).includes(s) ? 'selected' : ''}`} onClick={() => toggleStrategy(s)}>
+                        {s}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {errors.strategies && <p className="text-45">{errors.strategies}</p>}
+            </div>
+
             <div className="field-group">
-              <label>Source of Funds</label>
-              <input type="text" value={activeItem.fund_source} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, fund_source: e.target.value })} />
+              <label>General Requirements/Miscellaneous/Common Supplies and Equipment</label>
+              <select value={activeItem.general_requirements || ''} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, general_requirements: e.target.value })}>
+                <option value="">Select (optional)...</option>
+                {GENERAL_REQ_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+              <p className="mode-hint">Optional. Choose which one this PPMP item is, if any.</p>
             </div>
-            <div className="field-group">
-              <label>Estimated Budget (PhP)</label>
-              <input type="text" value={activeItem.budget} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, budget: e.target.value })} />
-              {errors.budget && <p className="text-45">{errors.budget}</p>}
-            </div>
-            <div className="field-group" style={{ gridColumn: 'span 2' }}>
-              <label>Supporting Documents</label>
-              {!isViewMode && <input type="file" multiple onChange={handleFileUpload} />}
-              <ul style={{ fontSize: 12, marginTop: 6 }}>
-                {activeItem.supporting_documents.map((d, i) => <li key={i}>{d.name} ({Math.round(d.size / 1024)} KB)</li>)}
-              </ul>
-              {errors.supporting_documents && <p className="text-45">{errors.supporting_documents}</p>}
-            </div>
-            <div className="field-group" style={{ gridColumn: 'span 2' }}>
+
+            <div className={`field-group ${errors.remarks ? 'error-state' : ''}`}>
               <label>Remarks</label>
               <textarea value={activeItem.remarks} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, remarks: e.target.value })} />
+              {errors.remarks && <p className="text-45">{errors.remarks}</p>}
+            </div>
+
+            <div className={`field-group ${errors.supporting_documents ? 'error-state' : ''}`}>
+              <label>Attached Supporting Documents</label>
+              <div className="doc-type-hint" style={{ padding: '10px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>
+                {docLabel ? `Required document: ${docLabel}` : 'Select a Type of Project in Step 1 to see the required document.'}
+              </div>
+
+              {!isViewMode && (
+                <>
+                  <div
+                    className={`upload-zone ${dragOver ? 'drag-over' : ''} ${docs.length ? 'has-file' : ''}`}
+                    onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                    onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={e => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
+                  >
+                    <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="17 8 12 3 7 8" />
+                      <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                    <p style={{ margin: 0 }}>Drop here to attach or <span className="upload-link">upload</span></p>
+                    <small>Max 10MB per file, 50MB total</small>
+                  </div>
+                  <input ref={fileInputRef} type="file" multiple hidden onChange={e => { addFiles(e.target.files); e.target.value = ''; }} />
+                </>
+              )}
+
+              {docs.length > 0 && (
+                <ul className="uploaded-file-list">
+                  {docs.map((d, i) => (
+                    <li key={d.fileId || i} className="uploaded-file-item">
+                      <span className="uploaded-file-info">{d.name}</span>
+                      <span className="uploaded-file-size">{formatFileSize(d.size || 0)}</span>
+                      {!isViewMode && <button type="button" className="remove-doc-btn" onClick={() => removeDoc(i)}>Remove</button>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {errors.supporting_documents && <p className="text-45">{errors.supporting_documents}</p>}
             </div>
           </div>
         )}
 
         <div className="footer-actions">
-          {step > 1 && <button type="button" className="back-btn" onClick={() => setStep(s => s - 1)}>&larr; Back</button>}
+          {step > 1
+            ? <button type="button" className="back-btn" onClick={() => setStep(s => s - 1)}>&larr; Back</button>
+            : <button type="button" className="back-btn" onClick={onClose}>&larr; Cancel</button>}
           {step < 3 ? (
             <button type="button" className="next-btn" onClick={handleNext}>Next &rarr;</button>
           ) : (
-            !isViewMode && <button type="button" className="next-btn" onClick={handleSave}>Finish & Save</button>
+            isViewMode
+              ? <button type="button" className="next-btn" onClick={onClose}>Close</button>
+              : <button type="button" className="next-btn" onClick={handleSave}>Finish & Save</button>
           )}
         </div>
       </div>
