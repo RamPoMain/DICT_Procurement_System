@@ -910,3 +910,12 @@
 }
 .db-modal .db-modal-edit-item-btn:hover { background: var(--db-accent, #3B82F6); color: #fff; }
 .modal-status-badge.is-draft { background: rgba(148, 163, 184, 0.16); color: var(--db-text-dim, #8B94A8); }
+/* ===== Date inputs: clickable anywhere, readable native icon ===== */
+.db-modal input[type="date"]:not(:disabled) {
+  cursor: pointer;
+}
+
+/* Makes the browser's own calendar icon and popup light on the dark theme */
+[data-theme="dark"] #requestModalOverlay input[type="date"] {
+  color-scheme: dark;
+}

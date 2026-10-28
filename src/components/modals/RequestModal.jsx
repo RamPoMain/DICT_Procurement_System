@@ -365,12 +365,21 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   };
 
   const dateField = (key, label) => (
-    <div className={`field-group ${errors[key] ? 'error-state' : ''}`}>
-      <label>{label}</label>
-      <input type="date" value={activeItem[key]} disabled={isViewMode} onChange={e => setActiveItem({ ...activeItem, [key]: e.target.value })} />
-      {errors[key] && <p className="text-45">{errors[key]}</p>}
-    </div>
-  );
+  <div className={`field-group ${errors[key] ? 'error-state' : ''}`}>
+    <label>{label}</label>
+    <input
+      type="date"
+      value={activeItem[key]}
+      disabled={isViewMode}
+      onChange={e => setActiveItem({ ...activeItem, [key]: e.target.value })}
+      onClick={e => {
+        if (isViewMode) return;
+        try { e.currentTarget.showPicker(); } catch { /* browser doesn't support it */ }
+      }}
+    />
+    {errors[key] && <p className="text-45">{errors[key]}</p>}
+  </div>
+);
 
   // Only requesters can edit, and only while the PPMP is still a Draft
   const canEdit = !!recordId && !recordLocked && !!user?.canRequest;
