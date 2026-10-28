@@ -10,8 +10,10 @@ import {
   getRecommendedMode,
   claimEntryRef,
   findExistingReferenceInfo,
-  getRecordItems
+  getRecordItems,
+  getPpmpStatus
 } from '../../utils/procurementRules.js';
+import { generatePPMP_PDF } from '../../utils/pdfGenerator.js';
 import FileStore from '../../utils/fileStore.js';
 
 // NOTE: the original form keeps these options in its HTML (not in the JS), so this is a
@@ -68,6 +70,10 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   const [errors, setErrors] = useState({});
   const [failedBiddingWarning, setFailedBiddingWarning] = useState('');
   const [stratOpen, setStratOpen] = useState(false);
+  const [recordStatus, setRecordStatus] = useState('Draft');
+  const [recordLocked, setRecordLocked] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -108,6 +114,10 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     setStep(1);
     setStratOpen(false);
     setErrors({});
+    setNotice('');
+    setConfirmDelete(false);
+    setRecordStatus('Draft');
+    setRecordLocked(false);
     if (recordId) {
       const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
       const rec = records.find(r => r.id === recordId);
@@ -123,6 +133,8 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         setItemIdx(0);
         setActiveItem(itms[0] || createBlankItem());
         setIsViewMode(true);
+        setRecordStatus(rec.status || 'Draft');
+        setRecordLocked(getPpmpStatus(rec) !== 'Draft');
       }
     } else {
       setIsViewMode(false);
@@ -140,14 +152,17 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   }, [isOpen, recordId]);
 
   // Live detection of Two Failed Biddings under RA 12009 Sec. 33
+  // (re-runs when Edit is pressed, and ignores the record being edited)
   useEffect(() => {
-    if (isViewMode) return;
+    if (isViewMode) { setFailedBiddingWarning(''); return; }
     const desc = activeItem.project_description.trim();
     if (!desc) {
       setFailedBiddingWarning('');
       return;
     }
-    const refInfo = findExistingReferenceInfo(desc, activeItem.project_type, null, user?.office);
+    const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const currentRec = recordId ? all.find(r => r.id === recordId) : null;
+    const refInfo = findExistingReferenceInfo(desc, activeItem.project_type, currentRec, user?.office);
     if (refInfo && refInfo.competitiveCount >= 2) {
       setActiveItem(prev => ({
         ...prev,
@@ -158,7 +173,14 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     } else {
       setFailedBiddingWarning('');
     }
-  }, [activeItem.project_description, activeItem.project_type]);
+  }, [activeItem.project_description, activeItem.project_type, isViewMode]);
+
+  // Auto-hide the small toast message
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(''), 3000);
+    return () => clearTimeout(t);
+  }, [notice]);
 
   if (!isOpen) return null;
 
@@ -241,6 +263,12 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
 
     if (recordId) {
       const idx = records.findIndex(r => r.id === recordId);
+      if (idx !== -1 && getPpmpStatus(records[idx]) !== 'Draft') {
+        window.alert('This PPMP was submitted or approved in the meantime, so it can no longer be changed.');
+        if (onSaved) onSaved();
+        onClose();
+        return;
+      }
       if (idx !== -1) {
         records[idx].items = updatedItems;
         records[idx].fiscal_year = headerData.fiscal_year;
@@ -320,17 +348,65 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     </div>
   );
 
+  // Only requesters can edit, and only while the PPMP is still a Draft
+  const canEdit = !!recordId && !recordLocked && !!user?.canRequest;
+
+  const enableEditMode = () => {
+    if (!user?.canRequest) { setNotice('Your account is view/approve only and cannot edit requests.'); return; }
+    if (recordLocked) { setNotice('This PPMP is submitted for approval or approved - it can no longer be edited.'); return; }
+    setIsViewMode(false);
+    setNotice('You can now edit this request.');
+  };
+
+  const deleteCurrentItem = () => {
+    const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const idx = records.findIndex(r => r.id === recordId);
+    if (idx === -1) return;
+    if (getPpmpStatus(records[idx]) !== 'Draft') {
+      setConfirmDelete(false);
+      setNotice('This PPMP is submitted for approval or approved - items can no longer be deleted.');
+      return;
+    }
+    const remaining = getRecordItems(records[idx]).filter((_, i) => i !== itemIdx);
+    if (remaining.length === 0) records.splice(idx, 1);   // last item: remove the whole PPMP
+    else records[idx].items = remaining;
+    localStorage.setItem('procurement_records', JSON.stringify(records));
+    setConfirmDelete(false);
+    if (onSaved) onSaved();
+    onClose();
+  };
+
+  const exportPpmp = () => {
+    const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const rec = all.find(r => r.id === recordId);
+    if (rec) generatePPMP_PDF(rec);
+  };
+
   const docLabel = PROJECT_TYPE_DOC_LABELS[activeItem.project_type];
   const docs = activeItem.supporting_documents || [];
 
   return (
     <div className="db-modal-overlay" id="requestModalOverlay">
       <div className="db-modal">
-        {!isViewMode && (
+        {(!recordId || (isViewMode && canEdit)) && (
           <div className="db-modal-header-actions">
-            <button type="button" className="db-modal-pdf-btn" onClick={() => onBulkImport && onBulkImport()}>
-              &#8593; Bulk import
-            </button>
+            {!recordId && (
+              <button type="button" className="db-modal-pdf-btn" onClick={() => onBulkImport && onBulkImport()}>
+                &#8593; Bulk import
+              </button>
+            )}
+            {recordId && isViewMode && canEdit && (
+              <>
+                <button type="button" className="db-modal-edit-item-btn" onClick={enableEditMode}>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+                  Edit
+                </button>
+                <button type="button" className="db-modal-delete-item-btn" onClick={() => setConfirmDelete(true)}>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
+                  Delete Item
+                </button>
+              </>
+            )}
           </div>
         )}
         <button type="button" className="db-modal-close" onClick={onClose}>&times;</button>
@@ -341,13 +417,18 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
             {step === 2 && 'PROJECTED TIMELINE'}
             {step === 3 && 'FUNDING DETAILS'}
           </span>
+          {recordId && (
+            <span className={`modal-status-badge ${recordStatus === 'Completed' ? 'is-completed' : recordStatus === 'For Approval' ? 'is-pending' : 'is-draft'}`}>
+              {recordStatus === 'Completed' || recordStatus === 'For Approval' ? recordStatus : 'Draft'}
+            </span>
+          )}
         </div>
 
-        {items.length > 1 && (
+        {items.length > 1 && isViewMode && (
           <div className="modal-item-nav">
-            <button disabled={itemIdx === 0} onClick={() => { setItemIdx(i => i - 1); setActiveItem(items[itemIdx - 1]); }}>&larr;</button>
+            <button type="button" className="modal-item-nav-btn" disabled={itemIdx === 0} onClick={() => { setItemIdx(i => i - 1); setActiveItem(items[itemIdx - 1]); }}>&larr;</button>
             <span>Item {itemIdx + 1} of {items.length}</span>
-            <button disabled={itemIdx === items.length - 1} onClick={() => { setItemIdx(i => i + 1); setActiveItem(items[itemIdx + 1]); }}>&rarr;</button>
+            <button type="button" className="modal-item-nav-btn" disabled={itemIdx === items.length - 1} onClick={() => { setItemIdx(i => i + 1); setActiveItem(items[itemIdx + 1]); }}>&rarr;</button>
           </div>
         )}
 
@@ -617,15 +698,39 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         <div className="footer-actions">
           {step > 1
             ? <button type="button" className="back-btn" onClick={() => setStep(s => s - 1)}>&larr; Back</button>
-            : <button type="button" className="back-btn" onClick={onClose}>&larr; Cancel</button>}
-          {step < 3 ? (
-            <button type="button" className="next-btn" onClick={handleNext}>Next &rarr;</button>
-          ) : (
-            isViewMode
-              ? <button type="button" className="next-btn" onClick={onClose}>Close</button>
-              : <button type="button" className="next-btn" onClick={handleSave}>Finish & Save</button>
-          )}
+            : <button type="button" className="back-btn" onClick={onClose}>&larr; {isViewMode ? 'Close' : 'Cancel'}</button>}
+
+          <div className="footer-right-actions">
+            {isViewMode && recordId && (
+              <button type="button" className="export-app-btn" onClick={exportPpmp}>Export PPMP</button>
+            )}
+            {step < 3 ? (
+              <button type="button" className="next-btn" onClick={handleNext}>Next &rarr;</button>
+            ) : (
+              isViewMode
+                ? <button type="button" className="next-btn" onClick={onClose}>Close</button>
+                : <button type="button" className="next-btn" onClick={handleSave}>{recordId ? 'Save Changes' : 'Finish & Save'} &rarr;</button>
+            )}
+          </div>
         </div>
+
+        {confirmDelete && (
+          <div className="logout-overlay show" style={{ zIndex: 2000 }}>
+            <div className="logout-modal" role="dialog" aria-modal="true">
+              <div className="logout-icon">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+              </div>
+              <h3>Delete this item?</h3>
+              <p>{items.length > 1 ? 'This item will be permanently removed from the PPMP.' : 'This is the only item in the PPMP, so the whole PPMP will be deleted.'}</p>
+              <div className="logout-actions">
+                <button type="button" className="logout-cancel-btn" onClick={() => setConfirmDelete(false)}>Cancel</button>
+                <button type="button" className="logout-confirm-btn" onClick={deleteCurrentItem}>Delete</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className={`db-toast ${notice ? 'show' : ''}`} style={{ zIndex: 2100 }}>{notice}</div>
       </div>
     </div>
   );
