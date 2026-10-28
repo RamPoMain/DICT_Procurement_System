@@ -1,5 +1,6 @@
-import React, { useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import FileStore from '../../utils/fileStore.js';
+import FilePreviewModal from './FilePreviewModal.jsx';
 import { exportPPMP_Excel } from '../../utils/entriesExport.js';
 import {
   formatPesoExact,
@@ -20,8 +21,8 @@ function saveBlob(url, fileName) {
   document.body.removeChild(a);
 }
 
-// "Attached Supporting Documents" cell: name opens the file, arrow downloads it.
-function DocList({ item, notify }) {
+// "Attached Supporting Documents" cell: name opens the file in preview modal, arrow downloads it.
+function DocList({ item, notify, onPreviewDoc }) {
   const docs = Array.isArray(item.supporting_documents) ? item.supporting_documents : [];
   if (docs.length === 0) return <span className="ep-none">None</span>;
 
@@ -34,19 +35,10 @@ function DocList({ item, notify }) {
     return null;
   };
 
-  const openDoc = async (doc) => {
-    // Open the tab inside the click so pop-up blockers allow it.
-    const win = window.open('', '_blank');
-    const blob = await resolve(doc);
-    if (!blob) { if (win) win.close(); return; }
-    const url = URL.createObjectURL(blob);
-    if (win) {
-      win.location.href = url;
-    } else {
-      saveBlob(url, doc.name || 'document');
-      notify('Your browser blocked the new tab, so the file was downloaded instead.');
+  const openDoc = (doc) => {
+    if (onPreviewDoc) {
+      onPreviewDoc(doc);
     }
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
 
   const downloadDoc = async (doc) => {
@@ -64,7 +56,7 @@ function DocList({ item, notify }) {
         if (!hasDoc(doc)) return <li key={index}>{name}</li>;
         return (
           <li key={index} className="ep-doc-item">
-            <button type="button" className="ep-doc-link" title={`Open ${name}`} onClick={() => openDoc(doc)}>
+            <button type="button" className="ep-doc-link" title={`Preview ${name}`} onClick={() => openDoc(doc)}>
               {name}
             </button>
             <button type="button" className="ep-doc-download" title={`Download ${name}`} aria-label={`Download ${name}`} onClick={() => downloadDoc(doc)}>
@@ -103,6 +95,8 @@ const SIGNATORIES = [
  * Criteria and Strategies columns show only while the PPMP is still a Draft.
  */
 export default function ExcelPreviewModal({ record, onClose, onOpenRequest, notify = () => {} }) {
+  const [previewDoc, setPreviewDoc] = useState(null);
+
   useEffect(() => {
     if (!record) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -257,7 +251,7 @@ export default function ExcelPreviewModal({ record, onClose, onOpenRequest, noti
                             Needs document
                           </span>
                         ) : (
-                          <DocList item={item} notify={notify} />
+                          <DocList item={item} notify={notify} onPreviewDoc={setPreviewDoc} />
                         )}
                       </td>
                       <td>{item.general_requirements || ''}</td>
@@ -291,6 +285,12 @@ export default function ExcelPreviewModal({ record, onClose, onOpenRequest, noti
           </div>
         </div>
       </div>
+
+      <FilePreviewModal
+        isOpen={!!previewDoc}
+        onClose={() => setPreviewDoc(null)}
+        doc={previewDoc}
+      />
     </div>
   );
 }

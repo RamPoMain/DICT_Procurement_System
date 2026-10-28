@@ -15,6 +15,7 @@ import {
 import { generatePPMP_PDF } from '../../utils/pdfGenerator.js';
 import FileStore from '../../utils/fileStore.js';
 import BulkImportModal from './BulkImportModal.jsx';
+import FilePreviewModal from './FilePreviewModal.jsx';
 
 // NOTE: the original form keeps these options in its HTML (not in the JS), so this is a
 // placeholder list. Replace it with the exact <option> values from your original page.
@@ -75,6 +76,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   const [notice, setNotice] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -349,6 +351,26 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
 
   const removeDoc = (idx) => {
     setActiveItem(prev => ({ ...prev, supporting_documents: prev.supporting_documents.filter((_, i) => i !== idx) }));
+  };
+
+  const downloadDoc = async (d) => {
+    try {
+      const blob = await FileStore.docBlob(d);
+      if (!blob) {
+        setNotice('File data not found in storage.');
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = d.name || 'document';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setNotice('Could not download file.');
+    }
   };
 
   // Selecting N/A clears every other strategy; picking a real one clears N/A (as in the original form)
@@ -736,9 +758,70 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
                 <ul className="uploaded-file-list">
                   {docs.map((d, i) => (
                     <li key={d.fileId || i} className="uploaded-file-item">
-                      <span className="uploaded-file-info">{d.name}</span>
-                      <span className="uploaded-file-size">{formatFileSize(d.size || 0)}</span>
-                      {!isViewMode && <button type="button" className="remove-doc-btn" onClick={() => removeDoc(i)}>Remove</button>}
+                      <div className="uploaded-file-info">
+                        <button
+                          type="button"
+                          className="uploaded-file-name"
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            padding: 0,
+                            textAlign: 'left',
+                            font: 'inherit',
+                            color: 'var(--db-accent, #0088ff)',
+                            cursor: 'pointer',
+                            textDecoration: 'underline'
+                          }}
+                          title={`Click to preview ${d.name}`}
+                          onClick={() => setPreviewDoc(d)}
+                        >
+                          {d.name}
+                        </button>
+                        <span className="uploaded-file-size">({formatFileSize(d.size || 0)})</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <button
+                          type="button"
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--db-accent, #3b82f6)',
+                            cursor: 'pointer',
+                            fontSize: '12px',
+                            fontWeight: '600',
+                            padding: '2px 6px'
+                          }}
+                          title={`View ${d.name}`}
+                          onClick={() => setPreviewDoc(d)}
+                        >
+                          View
+                        </button>
+                        <button
+                          type="button"
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--db-accent, #3b82f6)',
+                            cursor: 'pointer',
+                            fontSize: '12px',
+                            fontWeight: '600',
+                            padding: '2px 6px'
+                          }}
+                          title={`Download ${d.name}`}
+                          onClick={() => downloadDoc(d)}
+                        >
+                          Download
+                        </button>
+                        {!isViewMode && (
+                          <button
+                            type="button"
+                            className="uploaded-file-remove"
+                            onClick={() => removeDoc(i)}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -795,6 +878,12 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
             if (onSaved) onSaved();
             onClose();
           }}
+        />
+
+        <FilePreviewModal
+          isOpen={!!previewDoc}
+          onClose={() => setPreviewDoc(null)}
+          doc={previewDoc}
         />
       </div>
     </div>
