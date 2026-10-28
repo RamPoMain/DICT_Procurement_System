@@ -93,12 +93,7 @@ git clone https://github.com/RamPoMain/DICT_Procurement_System.git
 cd DICT_Procurement_System
 ```
 
-2. Navigate into the application directory:
-```bash
-cd dict-procurement-react
-```
-
-3. Install dependencies:
+2. Install dependencies:
 ```bash
 npm install
 ```
@@ -112,7 +107,7 @@ npm run dev
 
 Open your browser and navigate to:
 ```text
-http://localhost:5173/
+http://localhost:3000/
 ```
 
 ### Building for Production
