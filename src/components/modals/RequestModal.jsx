@@ -2,14 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext.jsx';
 import {
   parseBudgetNumber,
-  formatPesoMessage,
-  PROCUREMENT_MODE_RULES,
+  STANDARD_PROCUREMENT_MODES,
   isBracketMismatch,
   exceedsModeCeiling,
   budgetBracketMessage,
-  getRecommendedMode,
   claimEntryRef,
   findExistingReferenceInfo,
+  tagFailedAttempts,
   getRecordItems,
   getPpmpStatus
 } from '../../utils/procurementRules.js';
@@ -169,11 +168,21 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         mode: 'Negotiated Procurement – Two Failed Biddings',
         bid_evaluation_criteria: 'Negotiated'
       }));
-      setFailedBiddingWarning(`Matches ${refInfo.reference_no}: 2 failed biddings detected. Mode is locked to Negotiated Procurement – Two Failed Biddings (Sec. 33).`);
+      setFailedBiddingWarning(`Matches ${refInfo.reference_no || 'prior attempts'}: 2 failed biddings detected. Mode is locked to Negotiated Procurement – Two Failed Biddings (Sec. 33).`);
     } else {
       setFailedBiddingWarning('');
+      setActiveItem(prev => {
+        if (prev.mode?.includes('Two Failed Biddings')) {
+          return {
+            ...prev,
+            mode: '',
+            bid_evaluation_criteria: prev.bid_evaluation_criteria === 'Negotiated' ? '' : prev.bid_evaluation_criteria
+          };
+        }
+        return prev;
+      });
     }
-  }, [activeItem.project_description, activeItem.project_type, isViewMode]);
+  }, [activeItem.project_description, activeItem.project_type, isViewMode, recordId, user?.office]);
 
   // Auto-hide the small toast message
   useEffect(() => {
@@ -229,7 +238,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
       const b = parseBudgetNumber(activeItem.budget);
       if (!b || b <= 0) {
         errs.budget = 'Budget must be greater than 0';
-      } else if (activeItem.mode !== 'Negotiated Procurement – Two Failed Biddings') {
+      } else if (!activeItem.mode?.includes('Two Failed Biddings') && activeItem.mode !== 'Negotiated Procurement') {
         if (isBracketMismatch(activeItem.mode, b)) errs.budget = budgetBracketMessage(activeItem.mode, b);
         else if (exceedsModeCeiling(activeItem.mode, b)) errs.budget = `Exceeds allowable budget for ${activeItem.mode}`;
       }
@@ -252,12 +261,21 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
 
   const handleSave = () => {
     if (!validateCurrentStep()) return;
-    const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    let records = JSON.parse(localStorage.getItem('procurement_records')) || [];
     const updatedItems = [...items];
     const finalItem = { ...activeItem };
 
+    const isTwoFailed = finalItem.mode?.includes('Two Failed Biddings');
+    const refInfo = isTwoFailed
+      ? findExistingReferenceInfo(finalItem.project_description, finalItem.project_type, recordId ? records.find(r => r.id === recordId) : null, user?.office)
+      : null;
+
     if (!finalItem.reference_no) {
-      finalItem.reference_no = claimEntryRef(records, finalItem.project_type, headerData.fiscal_year);
+      if (refInfo?.reference_no) {
+        finalItem.reference_no = refInfo.reference_no;
+      } else {
+        finalItem.reference_no = claimEntryRef(records, finalItem.project_type, headerData.fiscal_year);
+      }
     }
     updatedItems[itemIdx] = finalItem;
 
@@ -287,6 +305,10 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         remarksHistory: []
       };
       records.push(newRec);
+    }
+
+    if (isTwoFailed) {
+      records = tagFailedAttempts(records, finalItem.project_description, user?.office);
     }
 
     localStorage.setItem('procurement_records', JSON.stringify(records));
@@ -520,9 +542,25 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
             <div className="form-col">
               <div className={`field-group ${errors.mode ? 'error-state' : ''}`}>
                 <label>Recommended Mode of Procurement</label>
-                <select value={activeItem.mode} disabled={isViewMode || !!failedBiddingWarning} onChange={e => setActiveItem({ ...activeItem, mode: e.target.value })}>
+                <select
+                  value={activeItem.mode}
+                  disabled={isViewMode || !!failedBiddingWarning}
+                  onChange={e => setActiveItem({ ...activeItem, mode: e.target.value })}
+                >
                   <option value="">Select mode...</option>
-                  {Object.keys(PROCUREMENT_MODE_RULES).map(m => <option key={m} value={m}>{m}</option>)}
+                  {STANDARD_PROCUREMENT_MODES.map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                  {(activeItem.mode?.includes('Two Failed Biddings') || !!failedBiddingWarning) && (
+                    <option value={activeItem.mode || 'Negotiated Procurement – Two Failed Biddings'}>
+                      {activeItem.mode || 'Negotiated Procurement – Two Failed Biddings'}
+                    </option>
+                  )}
+                  {activeItem.mode &&
+                    !STANDARD_PROCUREMENT_MODES.includes(activeItem.mode) &&
+                    !activeItem.mode.includes('Two Failed Biddings') && (
+                      <option value={activeItem.mode}>{activeItem.mode}</option>
+                  )}
                 </select>
                 <p className="mode-hint">
                   Recommended by budget: &le;&#8369;199,999 &rarr; Direct Acquisition &middot; &#8369;200,000&ndash;&#8369;1,999,999 &rarr; Small Value Procurement (SVP) &middot; &#8369;2,000,000 and above &rarr; Competitive Bidding

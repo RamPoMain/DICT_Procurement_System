@@ -56,6 +56,14 @@ export const PROCUREMENT_MODE_RULES = {
     allowedTypes: ['Goods', 'Consulting Services'],
     legalBasis: 'RA 12009 Sec. 28'
   },
+  'Negotiated Procurement': {
+    mode: 'Negotiated Procurement',
+    minBudget: 0.01,
+    maxBudget: Infinity,
+    allowedTypes: ['Goods', 'Infrastructure', 'Consulting Services'],
+    legalBasis: 'RA 12009 Sec. 33',
+    bracketLabel: 'Negotiated Procurement'
+  },
   'Negotiated Procurement – Two Failed Biddings': {
     mode: 'Negotiated Procurement – Two Failed Biddings',
     minBudget: 0.01,
@@ -63,8 +71,26 @@ export const PROCUREMENT_MODE_RULES = {
     allowedTypes: ['Goods', 'Infrastructure', 'Consulting Services'],
     legalBasis: 'RA 12009 Sec. 33',
     bracketLabel: 'Two failed biddings (Sec. 33)'
+  },
+  'Negotiated Procurement - Two Failed Biddings': {
+    mode: 'Negotiated Procurement - Two Failed Biddings',
+    minBudget: 0.01,
+    maxBudget: Infinity,
+    allowedTypes: ['Goods', 'Infrastructure', 'Consulting Services'],
+    legalBasis: 'RA 12009 Sec. 33',
+    bracketLabel: 'Two failed biddings (Sec. 33)'
   }
 };
+
+export const STANDARD_PROCUREMENT_MODES = [
+  'Direct Acquisition',
+  'Small Value Procurement (SVP)',
+  'Shopping',
+  'Competitive Bidding',
+  'Repeat Order',
+  'Direct Contracting',
+  'Negotiated Procurement'
+];
 
 export const MODE_BUDGET_BRACKETS = [
   { below: 200000, mode: 'Direct Acquisition', label: '₱0 – ₱199,999' },
@@ -191,9 +217,17 @@ export function claimEntryRef(records, projectType, fiscalYear) {
 }
 
 // Two Failed Biddings Finder (RA 12009 Sec. 33)
+export function normalizeDescription(description) {
+  return String(description || '')
+    .replace(/^\[(?:1st|2nd|3rd)\s+Failure\]\s*/i, '')
+    .trim()
+    .toLowerCase();
+}
+
 export function findExistingReferenceInfo(description, projectType, currentRecord, office) {
-  const desc = String(description || '').trim();
-  if (!desc || !office) return null;
+  const normDesc = normalizeDescription(description);
+  const offNorm = String(office || '').trim().toLowerCase();
+  if (!normDesc || !offNorm) return null;
 
   const allRecords = JSON.parse(localStorage.getItem('procurement_records')) || [];
   let matchedRefNo = null;
@@ -201,12 +235,14 @@ export function findExistingReferenceInfo(description, projectType, currentRecor
   const seenAttemptKeys = new Set();
 
   const checkItem = (it) => {
-    if (!it || String(it.project_description || '').trim() !== desc) return;
+    if (!it) return;
+    const itNormDesc = normalizeDescription(it.project_description);
+    if (itNormDesc !== normDesc) return;
     if (it.reference_no && !matchedRefNo) matchedRefNo = it.reference_no;
 
-    const attemptKey = String(it.origin_id || it.id);
-    if (seenAttemptKeys.has(attemptKey)) return;
-    seenAttemptKeys.add(attemptKey);
+    const attemptKey = String(it.origin_id || it.id || it.reference_no || '');
+    if (attemptKey && seenAttemptKeys.has(attemptKey)) return;
+    if (attemptKey) seenAttemptKeys.add(attemptKey);
 
     const isCompetitive = String(it.mode || '').trim().toLowerCase().includes('competitive bidding');
     if (isCompetitive) competitiveCount++;
@@ -215,11 +251,35 @@ export function findExistingReferenceInfo(description, projectType, currentRecor
   if (currentRecord) getRecordItems(currentRecord).forEach(checkItem);
 
   allRecords
-    .filter(r => (!currentRecord || r.id !== currentRecord.id) && String(r.end_user || '').trim() === office.trim())
+    .filter(r => (!currentRecord || r.id !== currentRecord.id) && String(r.end_user || '').trim().toLowerCase() === offNorm)
     .forEach(r => getRecordItems(r).forEach(checkItem));
 
-  if (!matchedRefNo) return null;
+  if (competitiveCount < 2 && !matchedRefNo) return null;
   return { reference_no: matchedRefNo, competitiveCount };
+}
+
+export function tagFailedAttempts(records, description, office) {
+  const normDesc = normalizeDescription(description);
+  const offNorm = String(office || '').trim().toLowerCase();
+  if (!normDesc || !offNorm) return records;
+
+  let failureCount = 0;
+  return (records || []).map(r => {
+    if (String(r.end_user || '').trim().toLowerCase() !== offNorm) return r;
+    const updatedItems = getRecordItems(r).map(it => {
+      const itDesc = normalizeDescription(it.project_description);
+      if (itDesc === normDesc && String(it.mode || '').toLowerCase().includes('competitive bidding')) {
+        failureCount++;
+        const tag = failureCount === 1 ? '[1st Failure]' : '[2nd Failure]';
+        const raw = String(it.project_description || '').replace(/^\[(?:1st|2nd|3rd)\s+Failure\]\s*/i, '').trim();
+        if (!String(it.project_description || '').startsWith(tag)) {
+          return { ...it, project_description: `${tag} ${raw}` };
+        }
+      }
+      return it;
+    });
+    return { ...r, items: updatedItems };
+  });
 }
 
 // APP Storage & Helpers
