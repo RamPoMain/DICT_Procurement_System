@@ -14,6 +14,7 @@ import {
 } from '../../utils/procurementRules.js';
 import { generatePPMP_PDF } from '../../utils/pdfGenerator.js';
 import FileStore from '../../utils/fileStore.js';
+import BulkImportModal from './BulkImportModal.jsx';
 
 // NOTE: the original form keeps these options in its HTML (not in the JS), so this is a
 // placeholder list. Replace it with the exact <option> values from your original page.
@@ -73,6 +74,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   const [recordLocked, setRecordLocked] = useState(false);
   const [notice, setNotice] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -412,8 +414,12 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
       <div className="db-modal">
         {(!recordId || (isViewMode && canEdit)) && (
           <div className="db-modal-header-actions">
-            {!recordId && (
-              <button type="button" className="db-modal-pdf-btn" onClick={() => onBulkImport && onBulkImport()}>
+            {!recordId && onBulkImport && (
+              <button
+                type="button"
+                className="db-modal-pdf-btn"
+                onClick={onBulkImport}
+              >
                 &#8593; Bulk import
               </button>
             )}
@@ -769,6 +775,18 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         )}
 
         <div className={`db-toast ${notice ? 'show' : ''}`} style={{ zIndex: 2100 }}>{notice}</div>
+
+        <BulkImportModal
+          isOpen={bulkModalOpen}
+          onClose={() => setBulkModalOpen(false)}
+          headerData={headerData}
+          recordId={recordId}
+          onSuccess={(_result) => {
+            setBulkModalOpen(false);
+            if (onSaved) onSaved();
+            onClose();
+          }}
+        />
       </div>
     </div>
   );

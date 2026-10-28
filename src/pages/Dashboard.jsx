@@ -3,6 +3,7 @@ import Sidebar from '../components/layout/Sidebar.jsx';
 import RequestModal from '../components/modals/RequestModal.jsx';
 import AppPreviewModal from '../components/modals/AppPreviewModal.jsx';
 import ExcelPreviewModal from '../components/modals/ExcelPreviewModal.jsx';
+import BulkImportModal from '../components/modals/BulkImportModal.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
 import {
@@ -16,7 +17,6 @@ import {
 import {
   readRecords,
   getPpmpStatus,
-  isPpmpClosed,
   canDeleteRecord,
   getVisibleRecords,
   canActOnRecord,
@@ -56,6 +56,7 @@ export default function Dashboard() {
   const [appModalYear, setAppModalYear] = useState(null);
   const [pendingDeleteId, setPendingDeleteId] = useState(null);
   const [previewRecordId, setPreviewRecordId] = useState(null);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [toast, setToast] = useState('');
   const toastTimer = useRef(null);
 
@@ -211,13 +212,30 @@ export default function Dashboard() {
             <p>Here's a quick look at your procurement requests and activity.</p>
           </div>
           {user?.canRequest && (
-            <button type="button" className="db-new-request-btn" onClick={openNewRequest}>
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-              New Request
-            </button>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button type="button" className="db-new-request-btn" onClick={openNewRequest}>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                New Request
+              </button>
+              <button
+                type="button"
+                className="db-new-request-btn"
+                style={{
+                  background: 'rgba(59, 130, 246, 0.12)',
+                  color: 'var(--db-accent, #3b82f6)',
+                  border: '1px solid var(--db-accent, #3b82f6)'
+                }}
+                onClick={() => setBulkModalOpen(true)}
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 15V4m0 0L8 8m4-4l4 4M5 20h14" />
+                </svg>
+                Bulk Import
+              </button>
+            </div>
           )}
         </div>
 
@@ -359,7 +377,24 @@ export default function Dashboard() {
         </div>
       </main>
 
-      <RequestModal isOpen={modalOpen} onClose={() => setModalOpen(false)} recordId={selectedRecordId} onSaved={loadData} />
+      <RequestModal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        recordId={selectedRecordId}
+        onSaved={loadData}
+        onBulkImport={() => {
+          setModalOpen(false);
+          setBulkModalOpen(true);
+        }}
+      />
+      <BulkImportModal
+        isOpen={bulkModalOpen}
+        onClose={() => setBulkModalOpen(false)}
+        onSuccess={() => {
+          loadData();
+          showToast('Bulk items imported successfully!');
+        }}
+      />
       {appModalYear && (
         <AppPreviewModal isOpen={!!appModalYear} onClose={() => setAppModalYear(null)} fiscalYear={appModalYear} onUpdated={loadData} />
       )}
