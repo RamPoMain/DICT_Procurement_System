@@ -142,7 +142,6 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     setReviewRemarks('');
     setReviewRemarksError(false);
     setRecordStatus('Draft');
-    setRecordLocked(false);
 
     if (recordId) {
       const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
@@ -161,7 +160,6 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         setActiveItem(itms[0] || createBlankItem());
         setIsViewMode(true);
         setRecordStatus(rec.status || 'Draft');
-        setRecordLocked(isPpmpLocked(rec));
       } else {
         setCurrentRecord(null);
       }
@@ -179,7 +177,6 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         is_indicative: 'Indicative'
       });
       setRecordStatus('Draft');
-      setRecordLocked(false);
     }
   }, [isOpen, recordId]);
 
@@ -474,7 +471,6 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     setNotice(res.message);
     setCurrentRecord({ ...res.record });
     setRecordStatus(res.record.status);
-    setRecordLocked(true);
     if (onSaved) onSaved();
   };
 
