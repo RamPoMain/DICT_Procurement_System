@@ -104,6 +104,27 @@ const centered = { halign: 'center' };
 const centeredMiddle = { halign: 'center', valign: 'middle' };
 
 // ---------------------------------------------------------------
+// APP section routing, shared by the PDF and the Excel exports.
+// GASS -> CSE; Direct Acquisition -> Miscellaneous;
+// otherwise an explicit tag decides; everything else -> General Requirements
+// ---------------------------------------------------------------
+export const APP_SECTION_TITLES = {
+  general: 'General Requirements',
+  misc: 'Miscellaneous Items (for Direct Acquisition only) Sec 32.2 of RA No. 12009',
+  cse: 'Common Supplies and Equipment (CSE)'
+};
+
+export function appSectionOf(it) {
+  const eu = String(it.end_user || '').toLowerCase();
+  if (eu.includes('general administration') || eu.includes('gass')) return 'cse';
+  if (String(it.mode || '').trim().toLowerCase().includes('direct acquisition')) return 'misc';
+  const chosen = String(it.general_requirements || '').trim();
+  if (chosen === 'Common Supplies and Equipment') return 'cse';
+  if (chosen === 'Miscellaneous') return 'misc';
+  return 'general';
+}
+
+// ---------------------------------------------------------------
 // PPMP PDF
 // ---------------------------------------------------------------
 export async function generatePPMP_PDF(record) {
@@ -320,21 +341,7 @@ export async function buildAPP_PDF(targetYear = null) {
 
   currentY += 8;
 
-  // Section routing: GASS -> CSE; Direct Acquisition -> Miscellaneous;
-  // otherwise an explicit tag decides; everything else -> General Requirements
-  const isGass = (it) => {
-    const eu = String(it.end_user || '').toLowerCase();
-    return eu.includes('general administration') || eu.includes('gass');
-  };
-  const isDirectAcquisition = (it) => String(it.mode || '').trim().toLowerCase().includes('direct acquisition');
-  const sectionOf = (it) => {
-    if (isGass(it)) return 'cse';
-    if (isDirectAcquisition(it)) return 'misc';
-    const chosen = String(it.general_requirements || '').trim();
-    if (chosen === 'Common Supplies and Equipment') return 'cse';
-    if (chosen === 'Miscellaneous') return 'misc';
-    return 'general';
-  };
+  const sectionOf = appSectionOf;
   const generalItems = appItems.filter((it) => sectionOf(it) === 'general');
   const miscItems = appItems.filter((it) => sectionOf(it) === 'misc');
   const cseItems = appItems.filter((it) => sectionOf(it) === 'cse');
@@ -390,9 +397,9 @@ export async function buildAPP_PDF(targetYear = null) {
   const totalBudget = appItems.reduce((sum, it) => sum + parseBudget(it.budget), 0);
 
   const body = [
-    ...section('General Requirements', generalItems),
-    ...section('Miscellaneous Items (for Direct Acquisition only) Sec 32.2 of RA No. 12009', miscItems),
-    ...section('Common Supplies and Equipment (CSE)', cseItems),
+    ...section(APP_SECTION_TITLES.general, generalItems),
+    ...section(APP_SECTION_TITLES.misc, miscItems),
+    ...section(APP_SECTION_TITLES.cse, cseItems),
     [
       { content: 'TOTAL BUDGET:', colSpan: 11, styles: { halign: 'right', fontStyle: 'bold' } },
       { content: peso(totalBudget), styles: { halign: 'right', fontStyle: 'bold' } },

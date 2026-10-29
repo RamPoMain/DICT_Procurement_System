@@ -37,7 +37,7 @@ import {
   deleteRecordById
 } from '../utils/entriesHelpers.js';
 import { exportPPMP_Excel } from '../utils/entriesExport';
-import { exportAppTemplateExcel } from '../utils/appTemplateExport';
+import ExportMenu from '../components/entries/ExportMenu.jsx';
 import { generatePPMP_PDF } from '../utils/pdfGenerator.js';
 import "../assets/styles/ppmp-inline-edit.css";
 
@@ -274,15 +274,7 @@ export default function Entries() {
                 <span className="db-app-label">{appButton.label}</span>
               </button>
             )}
-            {user?.role === 'SUP' && (
-              <button
-                type="button"
-                className="db-btn is-secondary"
-                onClick={() => exportAppTemplateExcel(new Date().getFullYear(), user)}
-              >
-                Export APP Template (.xlsx)
-              </button>
-            )}
+            <ExportMenu user={user} year={appButton?.year || new Date().getFullYear()} theme={theme} notify={setToast} />
             <button type="button" className="db-icon-btn" aria-label="Toggle dark/light mode" onClick={toggleTheme}>
               {theme === 'dark' ? '☀️' : '🌙'}
             </button>
