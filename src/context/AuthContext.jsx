@@ -93,7 +93,7 @@ export const ACCOUNTS = [
     stage: 'RD'
   },
   {
-    email: 'suppliers@dict.gov.ph',
+    email: 'supply@dict.gov.ph',
     password: '1',
     role: 'SUP',
     roleName: 'Suppliers',
