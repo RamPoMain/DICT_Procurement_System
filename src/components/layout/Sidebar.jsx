@@ -2,15 +2,12 @@ import React, { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.jsx';
 
-export default function Sidebar({ onNewRequest }) {
+export default function Sidebar({ onNewRequest, hasPendingApprovals = false }) {
   const { user, logout } = useAuth();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   // Generate 2-letter initials for avatar (e.g., "IL", "FP", "TO", "RD")
   const initials = user?.role ? user.role.slice(0, 2).toUpperCase() : '??';
-
-
-  
 
   return (
     <>
@@ -45,6 +42,19 @@ export default function Sidebar({ onNewRequest }) {
               <polyline points="9 22 9 12 15 12 15 22" />
             </svg>
             Dashboard
+            {hasPendingApprovals && (
+              <span
+                style={{
+                  marginLeft: 'auto',
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: 'var(--db-accent, #3b82f6)',
+                  boxShadow: '0 0 6px var(--db-accent, #3b82f6)'
+                }}
+                title="You have requests waiting for approval"
+              />
+            )}
           </NavLink>
 
           {/* Entries (PPMP & APP tables) */}

@@ -9,6 +9,54 @@ export const APPROVAL_CHAIN = [
   { role: 'RD',   label: 'Regional Director' }
 ];
 
+export function getApprovalStep(stage) {
+  return APPROVAL_CHAIN.find(step => step.role === stage) || null;
+}
+
+export const PROJECT_TYPE_DOC_LABELS = {
+  'Goods': 'Technical Specifications',
+  'Consulting Services': 'Terms of Reference',
+  'Infrastructure': 'Scope of Work'
+};
+
+export function getRequiredDocLabel(projectType) {
+  return PROJECT_TYPE_DOC_LABELS[projectType] || 'supporting document';
+}
+
+export function itemHasSupportingDocument(item) {
+  return !!item && Array.isArray(item.supporting_documents) && item.supporting_documents.length > 0;
+}
+
+export function getItemsMissingDocuments(record) {
+  return getRecordItems(record)
+    .map((item, index) => ({ number: index + 1, item }))
+    .filter(entry => !itemHasSupportingDocument(entry.item));
+}
+
+export function getItemsBudgetModeMismatch(record) {
+  return getRecordItems(record)
+    .map((item, index) => ({ number: index + 1, item }))
+    .filter(entry => {
+      const n = parseBudgetNumber(entry.item.budget);
+      return isBracketMismatch(String(entry.item.mode || '').trim(), n);
+    });
+}
+
+export function buildBudgetMismatchMessage(list) {
+  const shown = list.slice(0, 3).map(m => {
+    const n = parseBudgetNumber(m.item.budget);
+    return `Item ${m.number} (${formatPesoExact(n)} is not within ${m.item.mode})`;
+  });
+  const more = list.length - shown.length;
+  return `Fix the Mode of Procurement or Estimated Budget before submitting: ${shown.join(', ')}${more > 0 ? ` and ${more} more` : ''}. Open the PPMP and press Edit on each item.`;
+}
+
+export function buildMissingDocsMessage(missing) {
+  const shown = missing.slice(0, 3).map(m => `Item ${m.number} (${getRequiredDocLabel(m.item.project_type)})`);
+  const more = missing.length - shown.length;
+  return `Attach a supporting document before submitting: ${shown.join(', ')}${more > 0 ? ` and ${more} more` : ''}. Open the PPMP and press Edit on each item.`;
+}
+
 export const PROCUREMENT_MODE_RULES = {
   'Direct Acquisition': {
     mode: 'Direct Acquisition',
@@ -347,4 +395,208 @@ export function getLatestApprovedPpmpPerOffice(records, fiscalYear) {
   });
 
   return Array.from(latestByOffice.values());
+}
+
+export function canSessionActOnRecord(record, session) {
+  if (!session || !session.canApprove || !record) return false;
+  if (getPpmpStatus(record) !== 'For Approval') return false;
+  if (record.currentApproverRole !== session.stage) return false;
+  if (session.stage === 'HEAD') return record.end_user === session.headOf;
+  return true;
+}
+
+export function formatApprovalDate(timestamp) {
+  const n = Number(timestamp);
+  if (!n) return '';
+  return new Date(n).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+export function formatApprovalDateTime(timestamp) {
+  const n = Number(timestamp);
+  if (!n) return '';
+  return new Date(n).toLocaleString('en-PH', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
+}
+
+const PPMP_YEAR_COUNTER_KEY = 'ppmp_number_counters_by_year';
+
+export function ppmpYearCounterKey(office, fiscalYear) {
+  return (office || 'N/A') + '__' + String(fiscalYear || '').trim();
+}
+
+export function readPpmpYearCounters() {
+  try {
+    return JSON.parse(localStorage.getItem(PPMP_YEAR_COUNTER_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+export function recordApprovedPpmpNumber(record) {
+  if (!record) return;
+  const number = parseInt(record.ppmp_no, 10);
+  const year = String(record.fiscal_year || '').trim();
+  if (isNaN(number) || !year) return;
+
+  const office = record.end_user || 'N/A';
+  const key = ppmpYearCounterKey(office, year);
+  const counters = readPpmpYearCounters();
+  if (number > (Number(counters[key]) || 0)) {
+    counters[key] = number;
+    try {
+      localStorage.setItem(PPMP_YEAR_COUNTER_KEY, JSON.stringify(counters));
+    } catch (e) {
+      console.warn('Could not save PPMP number counter', e);
+    }
+  }
+}
+
+export function submitPpmpForApproval(recordId, session) {
+  if (!session) return { success: false, error: 'Not authenticated.' };
+  const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
+  const idx = all.findIndex(r => r.id === recordId);
+  if (idx === -1) return { success: false, error: 'Record not found.' };
+
+  const record = all[idx];
+  if (!isPpmpDraft(record)) {
+    return { success: false, error: 'This PPMP was already submitted for approval.' };
+  }
+
+  const missingDocs = getItemsMissingDocuments(record);
+  if (missingDocs.length > 0) {
+    return { success: false, error: buildMissingDocsMessage(missingDocs) };
+  }
+
+  const modeMismatch = getItemsBudgetModeMismatch(record);
+  if (modeMismatch.length > 0) {
+    return { success: false, error: buildBudgetMismatchMessage(modeMismatch) };
+  }
+
+  record.status = 'For Approval';
+  record.submitted_at = Date.now();
+  record.returned_for_revision = false;
+  record.submission_round = (Number(record.submission_round) || 1) + (record.rejected_at ? 1 : 0);
+
+  if (session.stage === 'HEAD') {
+    // Unit Head submitting for their own unit: auto-endorses and skips HEAD stage to TOD
+    record.currentApproverRole = 'TOD';
+    if (!Array.isArray(record.remarksHistory)) record.remarksHistory = [];
+    record.remarksHistory.push({
+      stage: 'HEAD',
+      role: session.role,
+      name: session.roleName,
+      action: 'submitted',
+      round: record.submission_round,
+      remarks: 'Submitted by the Unit Head.',
+      date: new Date().toLocaleDateString(),
+      at: Date.now()
+    });
+  } else {
+    record.currentApproverRole = 'HEAD';
+  }
+
+  record.submitted_by = {
+    name: session.roleName,
+    role: session.role,
+    email: session.email
+  };
+
+  try {
+    localStorage.setItem('procurement_records', JSON.stringify(all));
+  } catch (err) {
+    return { success: false, error: 'Could not submit for approval — please try again.' };
+  }
+
+  return {
+    success: true,
+    record,
+    message: `PPMP No. ${record.ppmp_no} submitted for approval.`
+  };
+}
+
+export function performPpmpReviewAction(recordId, action, remarksText, session) {
+  if (!session || !session.canApprove) {
+    return { success: false, error: 'Only an authorized approver can review a PPMP.' };
+  }
+  const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
+  const idx = all.findIndex(r => r.id === recordId);
+  if (idx === -1) return { success: false, error: 'Record not found.' };
+
+  const record = all[idx];
+  if (getPpmpStatus(record) !== 'For Approval') {
+    return { success: false, error: 'This PPMP must be submitted for approval before it can be reviewed.' };
+  }
+  if (!canSessionActOnRecord(record, session)) {
+    return { success: false, error: 'This PPMP is not waiting for your approval.' };
+  }
+
+  const remarks = (remarksText || '').trim();
+  if ((action === 'reject' || action === 'comment') && !remarks) {
+    return { success: false, error: 'Please enter remarks first.' };
+  }
+
+  // 1. Log the decision in remarksHistory
+  if (!Array.isArray(record.remarksHistory)) record.remarksHistory = [];
+  record.remarksHistory.push({
+    stage: session.stage,
+    role: session.role,
+    name: session.roleName,
+    action: action === 'approve' ? 'approved' : (action === 'reject' ? 'rejected' : 'remark'),
+    remarks: remarks || 'Approved.',
+    round: Number(record.submission_round) || 1,
+    date: new Date().toLocaleDateString(),
+    at: Date.now()
+  });
+
+  let message = '';
+
+  if (action === 'comment') {
+    message = `Remark added to PPMP No. ${record.ppmp_no}.`;
+  } else if (action === 'reject') {
+    record.status = 'Draft';
+    record.currentApproverRole = null;
+    record.returned_for_revision = true;
+    record.rejected_at = Date.now();
+    record.rejected_by = {
+      name: session.roleName,
+      role: session.role,
+      email: session.email,
+      stage: session.stage
+    };
+    message = `PPMP No. ${record.ppmp_no} rejected and returned to the requesting office.`;
+  } else {
+    // Approve
+    const currentIdx = APPROVAL_CHAIN.findIndex(step => step.role === record.currentApproverRole);
+    if (currentIdx > -1 && currentIdx < APPROVAL_CHAIN.length - 1) {
+      const next = APPROVAL_CHAIN[currentIdx + 1];
+      record.currentApproverRole = next.role;
+      message = `PPMP No. ${record.ppmp_no} approved and forwarded to ${next.label}.`;
+    } else {
+      record.status = 'Completed';
+      record.currentApproverRole = 'None';
+      record.returned_for_revision = false;
+      record.is_indicative = 'Final';
+      record.approved_at = Date.now();
+      recordApprovedPpmpNumber(record);
+      record.approved_by = {
+        name: session.roleName,
+        role: session.role,
+        email: session.email
+      };
+      message = `PPMP No. ${record.ppmp_no} fully approved and marked Final.`;
+    }
+  }
+
+  try {
+    localStorage.setItem('procurement_records', JSON.stringify(all));
+  } catch (err) {
+    return { success: false, error: 'Could not save review decision.' };
+  }
+
+  return { success: true, record, message, action };
 }

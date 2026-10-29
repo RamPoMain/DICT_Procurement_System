@@ -10,7 +10,21 @@ import {
   findExistingReferenceInfo,
   tagFailedAttempts,
   getRecordItems,
-  getPpmpStatus
+  getPpmpStatus,
+  isPpmpDraft,
+  isPpmpLocked,
+  isPpmpReturned,
+  canSessionActOnRecord,
+  formatApprovalDate,
+  formatApprovalDateTime,
+  getApprovalStep,
+  APPROVAL_CHAIN,
+  getItemsMissingDocuments,
+  getItemsBudgetModeMismatch,
+  buildMissingDocsMessage,
+  buildBudgetMismatchMessage,
+  submitPpmpForApproval,
+  performPpmpReviewAction
 } from '../../utils/procurementRules.js';
 import { generatePPMP_PDF } from '../../utils/pdfGenerator.js';
 import FileStore from '../../utils/fileStore.js';
@@ -72,7 +86,11 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   const [failedBiddingWarning, setFailedBiddingWarning] = useState('');
   const [stratOpen, setStratOpen] = useState(false);
   const [recordStatus, setRecordStatus] = useState('Draft');
-  const [recordLocked, setRecordLocked] = useState(false);
+  const [currentRecord, setCurrentRecord] = useState(null);
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
+  const [reviewRemarks, setReviewRemarks] = useState('');
+  const [reviewRemarksError, setReviewRemarksError] = useState(false);
+  const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
   const [notice, setNotice] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
@@ -119,12 +137,18 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     setErrors({});
     setNotice('');
     setConfirmDelete(false);
+    setReviewDialogOpen(false);
+    setSubmitDialogOpen(false);
+    setReviewRemarks('');
+    setReviewRemarksError(false);
     setRecordStatus('Draft');
     setRecordLocked(false);
+
     if (recordId) {
       const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
       const rec = records.find(r => r.id === recordId);
       if (rec) {
+        setCurrentRecord(rec);
         setHeaderData({
           ppmp_no: rec.ppmp_no,
           fiscal_year: rec.fiscal_year,
@@ -137,9 +161,12 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         setActiveItem(itms[0] || createBlankItem());
         setIsViewMode(true);
         setRecordStatus(rec.status || 'Draft');
-        setRecordLocked(getPpmpStatus(rec) !== 'Draft');
+        setRecordLocked(isPpmpLocked(rec));
+      } else {
+        setCurrentRecord(null);
       }
     } else {
+      setCurrentRecord(null);
       setIsViewMode(false);
       const fresh = createBlankItem();
       setItems([fresh]);
@@ -151,6 +178,8 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         end_user: user?.office || '',
         is_indicative: 'Indicative'
       });
+      setRecordStatus('Draft');
+      setRecordLocked(false);
     }
   }, [isOpen, recordId]);
 
@@ -404,13 +433,74 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
 );
 
   // Only requesters can edit, and only while the PPMP is still a Draft
-  const canEdit = !!recordId && !recordLocked && !!user?.canRequest;
+  const canAct = !!currentRecord && canSessionActOnRecord(currentRecord, user);
+  const isDraft = !currentRecord || isPpmpDraft(currentRecord);
+  const isReturned = !!currentRecord && isPpmpReturned(currentRecord);
+  const canEdit = !!recordId && isDraft && !!user?.canRequest;
 
   const enableEditMode = () => {
     if (!user?.canRequest) { setNotice('Your account is view/approve only and cannot edit requests.'); return; }
-    if (recordLocked) { setNotice('This PPMP is submitted for approval or approved - it can no longer be edited.'); return; }
+    if (currentRecord && isPpmpLocked(currentRecord)) {
+      setNotice('This PPMP is submitted for approval or approved — it can no longer be edited.');
+      return;
+    }
     setIsViewMode(false);
     setNotice('You can now edit this request.');
+  };
+
+  const handleOpenSubmitDialog = () => {
+    if (!currentRecord) return;
+    const missingDocs = getItemsMissingDocuments(currentRecord);
+    if (missingDocs.length > 0) {
+      setNotice(buildMissingDocsMessage(missingDocs));
+      return;
+    }
+    const modeMismatch = getItemsBudgetModeMismatch(currentRecord);
+    if (modeMismatch.length > 0) {
+      setNotice(buildBudgetMismatchMessage(modeMismatch));
+      return;
+    }
+    setSubmitDialogOpen(true);
+  };
+
+  const handleConfirmSubmit = () => {
+    if (!currentRecord) return;
+    const res = submitPpmpForApproval(currentRecord.id, user);
+    setSubmitDialogOpen(false);
+    if (!res.success) {
+      setNotice(res.error);
+      return;
+    }
+    setNotice(res.message);
+    setCurrentRecord({ ...res.record });
+    setRecordStatus(res.record.status);
+    setRecordLocked(true);
+    if (onSaved) onSaved();
+  };
+
+  const handleReviewAction = (action) => {
+    if (!currentRecord) return;
+    const remarks = reviewRemarks.trim();
+    if ((action === 'reject' || action === 'comment') && !remarks) {
+      setReviewRemarksError(true);
+      return;
+    }
+    const res = performPpmpReviewAction(currentRecord.id, action, remarks, user);
+    if (!res.success) {
+      setNotice(res.error);
+      return;
+    }
+    setReviewDialogOpen(false);
+    setReviewRemarks('');
+    setReviewRemarksError(false);
+    setNotice(res.message);
+    if (onSaved) onSaved();
+
+    if (action === 'comment') {
+      setCurrentRecord({ ...res.record });
+    } else {
+      onClose();
+    }
   };
 
   const deleteCurrentItem = () => {
@@ -443,51 +533,171 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   return (
     <div className="db-modal-overlay" id="requestModalOverlay">
       <div className="db-modal">
-        {(!recordId || (isViewMode && canEdit)) && (
-          <div className="db-modal-header-actions">
-            {!recordId && onBulkImport && (
-              <button
-                type="button"
-                className="db-modal-pdf-btn"
-                onClick={onBulkImport}
-              >
-                &#8593; Bulk import
+        <div className="db-modal-header-actions">
+          {!recordId && onBulkImport && (
+            <button
+              type="button"
+              className="db-modal-pdf-btn"
+              onClick={onBulkImport}
+            >
+              &#8593; Bulk import
+            </button>
+          )}
+
+          {canAct && (
+            <button
+              type="button"
+              className="db-modal-pdf-btn"
+              style={{
+                background: 'var(--db-accent, #3b82f6)',
+                color: '#fff',
+                borderColor: 'var(--db-accent, #3b82f6)',
+                fontWeight: 600
+              }}
+              onClick={() => {
+                setReviewRemarks('');
+                setReviewRemarksError(false);
+                setReviewDialogOpen(true);
+              }}
+            >
+              Review PPMP
+            </button>
+          )}
+
+          {recordId && isViewMode && isDraft && user?.canRequest && (
+            <button
+              type="button"
+              className="db-modal-pdf-btn"
+              style={{
+                background: 'var(--db-green, #10b981)',
+                color: '#fff',
+                borderColor: 'var(--db-green, #10b981)',
+                fontWeight: 600
+              }}
+              onClick={handleOpenSubmitDialog}
+            >
+              Submit for Approval &rarr;
+            </button>
+          )}
+
+          {recordId && isViewMode && canEdit && (
+            <>
+              <button type="button" className="db-modal-edit-item-btn" onClick={enableEditMode}>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+                Edit
               </button>
-            )}
-            {recordId && isViewMode && canEdit && (
-              <>
-                <button type="button" className="db-modal-edit-item-btn" onClick={enableEditMode}>
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
-                  Edit
-                </button>
-                <button type="button" className="db-modal-delete-item-btn" onClick={() => setConfirmDelete(true)}>
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
-                  Delete Item
-                </button>
-              </>
-            )}
-          </div>
-        )}
+              <button type="button" className="db-modal-delete-item-btn" onClick={() => setConfirmDelete(true)}>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
+                Delete Item
+              </button>
+            </>
+          )}
+        </div>
         <button type="button" className="db-modal-close" onClick={onClose}>&times;</button>
 
         <div className="title-tab-wrapper">
           <span className="text-9">
-            {step === 1 && 'PROCUREMENT PROJECT DETAILS'}
-            {step === 2 && 'PROJECTED TIMELINE'}
-            {step === 3 && 'FUNDING DETAILS'}
+            {canAct ? `APPROVAL REQUIRED: PPMP NO. ${headerData.ppmp_no || ''}` : (
+              step === 1 ? 'PROCUREMENT PROJECT DETAILS' :
+              step === 2 ? 'PROJECTED TIMELINE' :
+              'FUNDING DETAILS'
+            )}
           </span>
           {recordId && (
-            <span className={`modal-status-badge ${recordStatus === 'Completed' ? 'is-completed' : recordStatus === 'For Approval' ? 'is-pending' : 'is-draft'}`}>
-              {recordStatus === 'Completed' || recordStatus === 'For Approval' ? recordStatus : 'Draft'}
+            <span className={`modal-status-badge ${
+              isReturned ? 'is-returned' :
+              recordStatus === 'Completed' ? 'is-completed' :
+              recordStatus === 'For Approval' ? 'is-pending' : 'is-draft'
+            }`}>
+              {isReturned ? 'Returned' : (recordStatus === 'Completed' || recordStatus === 'For Approval' ? recordStatus : 'Draft')}
             </span>
           )}
         </div>
 
+        {/* Multi-Item Navigator */}
         {items.length > 1 && isViewMode && (
           <div className="modal-item-nav">
             <button type="button" className="modal-item-nav-btn" disabled={itemIdx === 0} onClick={() => { setItemIdx(i => i - 1); setActiveItem(items[itemIdx - 1]); }}>&larr;</button>
             <span>Item {itemIdx + 1} of {items.length}</span>
             <button type="button" className="modal-item-nav-btn" disabled={itemIdx === items.length - 1} onClick={() => { setItemIdx(i => i + 1); setActiveItem(items[itemIdx + 1]); }}>&rarr;</button>
+          </div>
+        )}
+
+        {/* 1. Approval Info Banner if Completed */}
+        {currentRecord && currentRecord.status === 'Completed' && (
+          <div className="approval-info">
+            <strong>Approved by {currentRecord.approved_by?.name || 'Regional Director'}</strong>
+            <span>Approved on {formatApprovalDateTime(currentRecord.approved_at) || formatApprovalDate(currentRecord.approved_at)}</span>
+          </div>
+        )}
+
+        {/* 2. Returned for revision banner */}
+        {currentRecord && isReturned && (
+          <div className="review-returned">
+            <strong>Returned for revision by {currentRecord.rejected_by?.name || 'an approver'}</strong>
+            {(() => {
+              const history = Array.isArray(currentRecord.remarksHistory) ? currentRecord.remarksHistory : [];
+              const lastRejection = history.slice().reverse().find(h => h.action === 'rejected');
+              return lastRejection?.remarks ? <span>{lastRejection.remarks}</span> : null;
+            })()}
+            <small>
+              Edit the PPMP, then submit it for approval again.
+              {currentRecord.rejected_at ? ` \u00b7 ${formatApprovalDateTime(currentRecord.rejected_at)}` : ''}
+            </small>
+          </div>
+        )}
+
+        {/* 3. For Approval stage badge/banner */}
+        {currentRecord && currentRecord.status === 'For Approval' && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '10px 14px',
+            borderRadius: 9,
+            background: 'rgba(59, 130, 246, 0.08)',
+            border: '1px solid rgba(59, 130, 246, 0.25)',
+            marginBottom: 16,
+            fontSize: 12.5,
+            color: 'var(--db-text)'
+          }}>
+            <span style={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: 'var(--db-accent, #3b82f6)',
+              display: 'inline-block'
+            }} />
+            <strong>Currently with:</strong>
+            <span>{getApprovalStep(currentRecord.currentApproverRole)?.label || currentRecord.currentApproverRole}</span>
+          </div>
+        )}
+
+        {/* 4. Review History Audit Trail */}
+        {currentRecord && Array.isArray(currentRecord.remarksHistory) && currentRecord.remarksHistory.length > 0 && (
+          <div className="review-remarks" style={{ marginBottom: 20 }}>
+            <p className="review-history-title">Review history</p>
+            <ul className="review-list">
+              {currentRecord.remarksHistory.map((h, idx) => {
+                const action = h.action || 'approved';
+                const stepInfo = getApprovalStep(h.stage);
+                const stageLabel = stepInfo ? stepInfo.label : (h.stage || 'Approver');
+                return (
+                  <li key={idx} className="review-item">
+                    <div className="review-item-head">
+                      <span className={`review-tag is-${action}`}>
+                        {action === 'approved' ? 'Approved' : action === 'rejected' ? 'Rejected' : action === 'remark' ? 'Remark' : 'Submitted'}
+                      </span>
+                      <strong>{h.name || h.role || 'Approver'}</strong>
+                      <span>{[stageLabel, formatApprovalDateTime(h.at) || h.date].filter(Boolean).join(' \u00b7 ')}</span>
+                    </div>
+                    {h.remarks && user?.role !== 'SUP' && (
+                      <p className="review-item-text">{h.remarks}</p>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         )}
 
@@ -840,6 +1050,27 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
             {isViewMode && recordId && (
               <button type="button" className="export-app-btn" onClick={exportPpmp}>Export PPMP</button>
             )}
+
+            {canAct && (
+              <button
+                type="button"
+                className="next-btn"
+                style={{
+                  background: 'var(--db-accent, #3b82f6)',
+                  color: '#fff',
+                  border: 'none',
+                  fontWeight: 600
+                }}
+                onClick={() => {
+                  setReviewRemarks('');
+                  setReviewRemarksError(false);
+                  setReviewDialogOpen(true);
+                }}
+              >
+                Review & Decide &rarr;
+              </button>
+            )}
+
             {step < 3 ? (
               <button type="button" className="next-btn" onClick={handleNext}>Next &rarr;</button>
             ) : (
@@ -849,6 +1080,106 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
             )}
           </div>
         </div>
+
+        {/* Submit for Approval Confirmation Modal */}
+        {submitDialogOpen && (
+          <div className="logout-overlay show" style={{ zIndex: 3000 }}>
+            <div className="logout-modal" role="alertdialog" aria-modal="true">
+              <div className="logout-icon is-approve">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none">
+                  <path d="M5 12L19 5L15 19L11.5 13L5 12Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <h3>Submit PPMP No. {currentRecord?.ppmp_no || headerData.ppmp_no} for approval?</h3>
+              <p>
+                {user?.stage === 'HEAD'
+                  ? 'Its status will change from Draft to For Approval and it goes straight to the TOD. '
+                  : 'Its status will change from Draft to For Approval and it goes to your Unit Head. '}
+                While it is under review it can no longer be edited or get new items.
+              </p>
+              <div className="logout-actions">
+                <button type="button" className="logout-cancel-btn" onClick={() => setSubmitDialogOpen(false)}>Cancel</button>
+                <button type="button" className="logout-confirm-btn is-approve" onClick={handleConfirmSubmit}>Submit</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Review & Decide Dialog */}
+        {reviewDialogOpen && currentRecord && (
+          <div className="logout-overlay show" style={{ zIndex: 3000 }}>
+            <div className="logout-modal review-modal" role="dialog" aria-modal="true">
+              <div className="logout-icon is-approve">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none">
+                  <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <h3>Review PPMP No. {currentRecord.ppmp_no || 'N/A'}</h3>
+              <p>
+                {(() => {
+                  const stepIdx = APPROVAL_CHAIN.findIndex(s => s.role === currentRecord.currentApproverRole);
+                  const isLastStep = stepIdx === APPROVAL_CHAIN.length - 1;
+                  const nextStep = !isLastStep && stepIdx > -1 ? APPROVAL_CHAIN[stepIdx + 1] : null;
+                  return (nextStep
+                    ? `Approve to forward it to the ${nextStep.label}. `
+                    : 'Approve is the final step: it marks the PPMP Final and closes it. ') +
+                    `Reject returns it to the requesting office for revision (remarks required). Your decision is recorded under ${user?.roleName || 'Approver'}.`;
+                })()}
+              </p>
+
+              <div className={`review-field ${reviewRemarksError ? 'has-error' : ''}`}>
+                <label>Remarks / Notes (required for Reject or Remark):</label>
+                <textarea
+                  placeholder="Enter reason for rejection, conditions, or review remarks..."
+                  value={reviewRemarks}
+                  onChange={(e) => {
+                    setReviewRemarks(e.target.value);
+                    if (e.target.value.trim()) setReviewRemarksError(false);
+                  }}
+                />
+                {reviewRemarksError && (
+                  <span className="review-error">Please enter remarks before rejecting or commenting.</span>
+                )}
+              </div>
+
+              <div className="review-actions">
+                <button
+                  type="button"
+                  className="logout-cancel-btn"
+                  onClick={() => {
+                    setReviewDialogOpen(false);
+                    setReviewRemarks('');
+                    setReviewRemarksError(false);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="db-action-btn"
+                  style={{ width: '100%', height: 'auto', padding: '10px 14px', borderRadius: 9, fontWeight: 600, fontSize: 13 }}
+                  onClick={() => handleReviewAction('comment')}
+                >
+                  Add remark only
+                </button>
+                <button
+                  type="button"
+                  className="logout-confirm-btn is-reject"
+                  onClick={() => handleReviewAction('reject')}
+                >
+                  Reject
+                </button>
+                <button
+                  type="button"
+                  className="logout-confirm-btn is-approve"
+                  onClick={() => handleReviewAction('approve')}
+                >
+                  Approve
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {confirmDelete && (
           <div className="logout-overlay show" style={{ zIndex: 2000 }}>
@@ -866,7 +1197,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
           </div>
         )}
 
-        <div className={`db-toast ${notice ? 'show' : ''}`} style={{ zIndex: 2100 }}>{notice}</div>
+        <div className={`db-toast ${notice ? 'show' : ''}`} style={{ zIndex: 3100 }}>{notice}</div>
 
         <BulkImportModal
           isOpen={bulkModalOpen}

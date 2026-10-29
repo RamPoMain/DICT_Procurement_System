@@ -85,10 +85,30 @@ export default function FilePreviewModal({ isOpen, onClose, doc }) {
             {blobUrl && (
               <button
                 type="button"
-                className="db-btn is-secondary"
-                style={{ padding: '6px 12px', fontSize: '12.5px' }}
+                className="app-preview-btn is-secondary"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '7px 15px',
+                  fontSize: '12.5px',
+                  fontWeight: 600,
+                  fontFamily: 'inherit',
+                  borderRadius: '8px',
+                  border: '1px solid var(--db-field-border, rgba(255,255,255,0.18))',
+                  background: 'var(--db-card-alt, rgba(255,255,255,0.08))',
+                  color: 'var(--db-text, #ffffff)',
+                  cursor: 'pointer',
+                  lineHeight: 1,
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                }}
                 onClick={handleDownload}
               >
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
                 Download
               </button>
             )}
@@ -145,7 +165,23 @@ export default function FilePreviewModal({ isOpen, onClose, doc }) {
                   <p style={{ margin: '0 0 20px', fontSize: '13px', color: 'var(--db-text-dim)' }}>
                     Preview is supported for PDF, images, and text files. For this document format, please download the file to view.
                   </p>
-                  <button type="button" className="db-btn" onClick={handleDownload}>
+                  <button
+                    type="button"
+                    className="app-preview-btn"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '9px 18px',
+                      fontSize: '13px'
+                    }}
+                    onClick={handleDownload}
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
                     Download to View
                   </button>
                 </div>

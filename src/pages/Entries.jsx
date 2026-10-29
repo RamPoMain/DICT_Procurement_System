@@ -9,8 +9,12 @@ import {
   calculateDeduplicatedBudget,
   getAllAppRecords,
   getRecordItems,
-  getPpmpStatus
+  getPpmpStatus,
+  isPpmpReturned,
+  formatApprovalDate,
+  getApprovalStep
 } from '../utils/procurementRules';
+import { getVisibleRecords } from '../utils/dashboardHelpers';
 import { exportPPMP_Excel, exportEntriesExcel } from '../utils/entriesExport';
 import { exportAppTemplateExcel } from '../utils/appTemplateExport';
 import { generatePPMP_PDF } from '../utils/pdfGenerator';
@@ -31,11 +35,11 @@ export default function Entries() {
 
   const loadData = () => {
     const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
-    setRecords(all);
+    setRecords(getVisibleRecords(all, user));
     setApps(getAllAppRecords());
   };
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadData(); }, [user]);
 
   const filteredRecords = records.filter(r => {
     if (statusFilter !== 'All' && getPpmpStatus(r) !== statusFilter) return false;
@@ -108,6 +112,7 @@ export default function Entries() {
                       <th>Type</th>
                       <th>Budget</th>
                       <th>Status</th>
+                      <th>Approved By</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
@@ -123,9 +128,34 @@ export default function Entries() {
                           <td>{r.is_indicative}</td>
                           <td>{formatPeso(calculateDeduplicatedBudget(getRecordItems(r)))}</td>
                           <td>
-                            <span className={`db-status-pill ${r.status === 'Completed' ? 'is-completed' : (r.status === 'For Approval' ? 'is-pending' : 'is-draft')}`}>
-                              {r.status}
-                            </span>
+                            {isPpmpReturned(r) ? (
+                              <span
+                                className="db-status-pill is-returned"
+                                title={`Returned by ${r.rejected_by?.name || 'an approver'} - open the PPMP to read the remarks`}
+                              >
+                                Returned
+                              </span>
+                            ) : r.status === 'For Approval' && user?.canTrackApprovals ? (
+                              <span className="db-status-pill is-pending">
+                                For Approval · {getApprovalStep(r.currentApproverRole)?.label || r.currentApproverRole}
+                              </span>
+                            ) : (
+                              <span className={`db-status-pill ${r.status === 'Completed' ? 'is-completed' : (r.status === 'For Approval' ? 'is-pending' : 'is-draft')}`}>
+                                {r.status}
+                              </span>
+                            )}
+                          </td>
+                          <td>
+                            {r.status !== 'Completed' ? (
+                              <span className="db-approver-none">—</span>
+                            ) : r.approved_by ? (
+                              <div className="db-approver">
+                                <strong>{r.approved_by.name}</strong>
+                                <span>{formatApprovalDate(r.approved_at)}</span>
+                              </div>
+                            ) : (
+                              <span className="db-approver-none" title="This PPMP was completed before approver tracking existed">Not recorded</span>
+                            )}
                           </td>
                           <td>
                             <div style={{ display: 'flex', gap: 6 }}>
@@ -145,7 +175,7 @@ export default function Entries() {
                         {/* Inline Expandable Sheet */}
                         {expandedId === r.id && (
                           <tr className="db-entry-expand-row">
-                            <td colSpan="7" style={{ padding: 12, background: 'var(--db-card-alt)' }}>
+                            <td colSpan="8" style={{ padding: 12, background: 'var(--db-card-alt)' }}>
                               <div style={{ overflowX: 'auto' }}>
                                 <table className="db-entries-table" style={{ background: '#fff', color: '#000' }}>
                                   <thead>
