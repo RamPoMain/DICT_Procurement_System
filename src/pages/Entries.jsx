@@ -1,80 +1,292 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Sidebar from '../components/layout/Sidebar.jsx';
 import RequestModal from '../components/modals/RequestModal.jsx';
 import AppPreviewModal from '../components/modals/AppPreviewModal.jsx';
+import PpmpExpanded from '../components/entries/PpmpExpanded.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
 import {
   formatPeso,
-  calculateDeduplicatedBudget,
   getAllAppRecords,
-  getRecordItems,
-  getPpmpStatus,
-  isPpmpReturned,
+  isPpmpDraft,
   formatApprovalDate,
-  getApprovalStep
-} from '../utils/procurementRules';
-import { getVisibleRecords } from '../utils/dashboardHelpers';
-import { exportPPMP_Excel, exportEntriesExcel } from '../utils/entriesExport';
+  getItemsMissingDocuments,
+  getItemsBudgetModeMismatch,
+  buildMissingDocsMessage,
+  buildBudgetMismatchMessage,
+  submitPpmpForApproval
+} from '../utils/procurementRules.js';
+import {
+  readRecords,
+  getVisibleRecords,
+  getPpmpStatus,
+  isPpmpClosed,
+  isPpmpReturned,
+  canDeleteRecord
+} from '../utils/dashboardHelpers.js';
+import {
+  ENTRY_FILTER_DEFAULTS,
+  filterEntryRecords,
+  getApprovedEntryNumbers,
+  getOffices,
+  getAppButtonInfo,
+  getRecordDescriptionSummary,
+  getRecordProjectTypeSummary,
+  getRecordTotalBudget,
+  deleteRecordById
+} from '../utils/entriesHelpers.js';
+import { exportPPMP_Excel } from '../utils/entriesExport';
 import { exportAppTemplateExcel } from '../utils/appTemplateExport';
-import { generatePPMP_PDF } from '../utils/pdfGenerator';
+import { generatePPMP_PDF } from '../utils/pdfGenerator.js';
+import "../assets/styles/ppmp-inline-edit.css";
+
+const STAGE_LABELS = { HEAD: 'Unit Head', TOD: 'TOD', BO: 'Budget Officer', RD: 'Regional Director' };
+const APP_ROLES = ['SUP', 'ARD', 'RD'];
+
+const statusClass = (status) =>
+  status === 'Completed' ? 'is-completed' : status === 'For Approval' ? 'is-pending' : 'is-draft';
+
+function StatusPill({ record, user }) {
+  const status = getPpmpStatus(record);
+
+  if (isPpmpReturned(record)) {
+    const by = record.rejected_by?.name || 'an approver';
+    return (
+      <span className="db-status-pill is-returned" title={`Returned by ${by} - open the PPMP to read the remarks`}>
+        Returned
+      </span>
+    );
+  }
+
+  const submittedTitle = status === 'For Approval' && record.submitted_by
+    ? `Submitted by ${record.submitted_by.name}${record.submitted_at ? ' on ' + formatApprovalDate(record.submitted_at) : ''}`
+    : undefined;
+
+  let label = status;
+  if (status === 'For Approval' && user?.canTrackApprovals) {
+    const where = STAGE_LABELS[record.currentApproverRole];
+    if (where) label = `For Approval · ${where}`;
+  }
+  return <span className={`db-status-pill ${statusClass(status)}`} title={submittedTitle}>{label}</span>;
+}
+
+function ApprovedByCell({ record }) {
+  if (!isPpmpClosed(record)) return <span className="db-approver-none">—</span>;
+  if (!record.approved_by) {
+    return <span className="db-approver-none" title="This PPMP was completed before approver tracking existed">Not recorded</span>;
+  }
+  return (
+    <div className="db-approver">
+      <strong>{record.approved_by.name}</strong>
+      <span>{formatApprovalDate(record.approved_at)}</span>
+    </div>
+  );
+}
+
+function ConfirmDialog({ dialog, onCancel, onConfirm }) {
+  useEffect(() => {
+    if (!dialog) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') onCancel(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [dialog, onCancel]);
+
+  if (!dialog) return null;
+  return (
+    <div className="db-modal-overlay" style={{ zIndex: 2000 }}>
+      <div className="db-modal" role="alertdialog" aria-modal="true" style={{ maxWidth: 400, textAlign: 'center', padding: '40px 30px' }}>
+        {dialog.danger && (
+          <div style={{ background: 'rgba(239, 68, 68, 0.1)', width: 60, height: 60, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
+            <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="#ef4444" strokeWidth="2">
+              <path d="M3 6h18m-2 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+            </svg>
+          </div>
+        )}
+        <h3 style={{ fontSize: 18, marginBottom: 10, color: 'var(--db-text, #E7EAF3)' }}>{dialog.title}</h3>
+        <p style={{ color: 'var(--db-text-dim, #8B94A8)', fontSize: 14, marginBottom: 30, lineHeight: 1.5 }}>{dialog.text}</p>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+          <button type="button" className="back-btn" style={{ flex: 1 }} onClick={onCancel} autoFocus>Cancel</button>
+          <button
+            type="button"
+            className="next-btn"
+            style={{ flex: 1, ...(dialog.danger ? { background: '#ef4444' } : null) }}
+            onClick={onConfirm}
+          >
+            {dialog.confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function Entries() {
-  const { user, isAppAuthorized } = useAuth();
+  const { user } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [tab, setTab] = useState(user?.role === 'SUP' ? 'app' : 'ppmp');
   const [records, setRecords] = useState([]);
   const [apps, setApps] = useState([]);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('All');
+  const [filters, setFilters] = useState(ENTRY_FILTER_DEFAULTS);
   const [expandedId, setExpandedId] = useState(null);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedRecordId, setSelectedRecordId] = useState(null);
   const [appModalYear, setAppModalYear] = useState(null);
+  const [dialog, setDialog] = useState(null);
+  const [toast, setToast] = useState('');
+  // True while the open PPMP has unsaved inline edits (reported by PpmpExpanded).
+  const dirtyRef = useRef(false);
+  const handleDirtyChange = useCallback((isDirty) => { dirtyRef.current = isDirty; }, []);
 
-  const loadData = () => {
-    const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
-    setRecords(getVisibleRecords(all, user));
+  const loadData = useCallback(() => {
+    setRecords(getVisibleRecords(readRecords(), user));
     setApps(getAllAppRecords());
+  }, [user]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  useEffect(() => {
+    if (!toast) return undefined;
+    const t = setTimeout(() => setToast(''), 3200);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const offices = useMemo(() => getOffices(records), [records]);
+  // A stale office selection (that office's PPMPs are gone) falls back to All.
+  const activeFilters = offices.includes(filters.office) || filters.office === 'All'
+    ? filters
+    : { ...filters, office: 'All' };
+
+  const filteredRecords = useMemo(
+    () => filterEntryRecords(records, activeFilters).sort((a, b) => b.id - a.id),
+    [records, activeFilters]
+  );
+  const approvedNumbers = useMemo(() => getApprovedEntryNumbers(records), [records]);
+  const approvedCount = filteredRecords.filter((r) => r.status === 'Completed').length;
+
+  // The open PPMP collapses by itself when the filters hide it.
+  const openId = filteredRecords.some((r) => r.id === expandedId) ? expandedId : null;
+
+  const setFilter = (key) => (e) => setFilters((f) => ({ ...f, [key]: e.target.value }));
+
+  const openRecord = (id) => { setSelectedRecordId(id); setModalOpen(true); };
+
+  // Collapsing a PPMP (or opening another) throws away its unsaved edits, so ask first.
+  const toggleRow = (id) => {
+    const nextId = expandedId === id ? null : id;
+    if (expandedId !== null && dirtyRef.current) {
+      setDialog({
+        kind: 'discard',
+        nextId,
+        title: 'Discard unsaved changes?',
+        text: 'You have unsaved changes in this PPMP. If you leave now they will be lost.',
+        confirmLabel: 'Discard'
+      });
+      return;
+    }
+    setExpandedId(nextId);
   };
 
-  useEffect(() => { loadData(); }, [user]);
+  const requestSubmit = (record) => {
+    if (!isPpmpDraft(record)) return;
+    const missing = getItemsMissingDocuments(record);
+    if (missing.length > 0) return setToast(buildMissingDocsMessage(missing));
+    const mismatch = getItemsBudgetModeMismatch(record);
+    if (mismatch.length > 0) return setToast(buildBudgetMismatchMessage(mismatch));
 
-  const filteredRecords = records.filter(r => {
-    if (statusFilter !== 'All' && getPpmpStatus(r) !== statusFilter) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      const match = (r.ppmp_no + ' ' + r.end_user + ' ' + r.fiscal_year).toLowerCase().includes(q);
-      if (!match) return false;
+    setDialog({
+      kind: 'submit',
+      record,
+      title: `Submit PPMP No. ${record.ppmp_no || 'N/A'} for approval?`,
+      text: (user?.stage === 'HEAD'
+        ? 'Its status will change from Draft to For Approval and it goes straight to the TOD. '
+        : 'Its status will change from Draft to For Approval and it goes to your Unit Head. ') +
+        'While it is under review it can no longer be edited or get new items.',
+      confirmLabel: 'Submit'
+    });
+  };
+
+  const requestDelete = (record) => {
+    if (!canDeleteRecord(record, user)) {
+      return setToast('An approved PPMP is closed and can only be deleted by an approver.');
     }
-    return true;
-  });
+    setDialog({
+      kind: 'delete',
+      record,
+      danger: true,
+      title: 'Delete Request?',
+      text: 'Are you sure you want to delete this procurement request? This action cannot be undone.',
+      confirmLabel: 'Delete'
+    });
+  };
+
+  const confirmDialog = () => {
+    const { kind, record } = dialog;
+    setDialog(null);
+    if (kind === 'discard') {
+      dirtyRef.current = false;
+      setExpandedId(dialog.nextId);
+      return;
+    }
+    if (kind === 'delete') {
+      setToast(deleteRecordById(record.id) ? 'Request deleted.' : 'Could not delete the request.');
+      setExpandedId(null);
+    } else {
+      const res = submitPpmpForApproval(record.id, user);
+      setToast(res.success ? res.message : res.error);
+    }
+    loadData();
+  };
+
+  const appButton = APP_ROLES.includes(user?.role) ? getAppButtonInfo(user, readRecords()) : null;
 
   return (
     <div className="db-body">
       <Sidebar onNewRequest={() => { setSelectedRecordId(null); setModalOpen(true); }} />
 
       <main className="db-main">
-        <div className="db-topbar">
+        <div className="db-header-banner">
+          <img src="/images/header-banner.png" alt="DICT Header Banner" />
+        </div>
+
+        <header className="db-topbar">
           <div>
-            <h1 className="db-title">Procurement Entries</h1>
-            <p className="db-subtitle">Consolidated view of all requests and compiled plans</p>
+            <h1 className="db-title">Entries</h1>
+            <p className="db-subtitle">Review, filter, and open all created PPMP records.</p>
           </div>
           <div className="db-topbar-actions">
-            
+            {appButton && (
+              <button
+                type="button"
+                className="db-app-btn is-secondary"
+                title="Preview the Annual Procurement Plan before downloading it"
+                onClick={() => setAppModalYear(appButton.year)}
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                </svg>
+                <span className="db-app-label">{appButton.label}</span>
+              </button>
+            )}
             {user?.role === 'SUP' && (
-              <button type="button" className="db-btn is-secondary" onClick={() => exportAppTemplateExcel(new Date().getFullYear(), user)}>
+              <button
+                type="button"
+                className="db-btn is-secondary"
+                onClick={() => exportAppTemplateExcel(new Date().getFullYear(), user)}
+              >
                 Export APP Template (.xlsx)
               </button>
             )}
-            <button type="button" className="db-icon-btn" onClick={toggleTheme}>
+            <button type="button" className="db-icon-btn" aria-label="Toggle dark/light mode" onClick={toggleTheme}>
               {theme === 'dark' ? '☀️' : '🌙'}
             </button>
           </div>
-        </div>
+        </header>
 
-        <div className="db-entries-card">
+        <section className="db-entries-card">
           <div className="db-entries-tabs">
             <button type="button" className={`db-tab-btn ${tab === 'ppmp' ? 'active' : ''}`} onClick={() => setTab('ppmp')}>
               PPMP Requests
@@ -86,129 +298,150 @@ export default function Entries() {
 
           {tab === 'ppmp' && (
             <>
-              <div className="db-entry-tools" style={{ marginBottom: 14 }}>
-                <div className="db-filter-control">
-                  <span>Status</span>
-                  <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-                    <option value="All">All Statuses</option>
-                    <option value="Draft">Draft</option>
-                    <option value="For Approval">For Approval</option>
-                    <option value="Completed">Completed</option>
-                  </select>
+              <div className="db-section-head">
+                <div>
+                  <h3>PPMP Entries</h3>
+                  <p>All created PPMPs, numbered and ready to filter.</p>
                 </div>
-                <div className="db-filter-control db-search-control">
-                  <span>Search</span>
-                  <input type="text" placeholder="Search entries..." value={search} onChange={e => setSearch(e.target.value)} />
+                <div className="db-entry-tools">
+                  <label className={`db-filter-control${offices.length < 2 ? ' hidden' : ''}`}>
+                    <span>Office</span>
+                    <select value={activeFilters.office} onChange={setFilter('office')}>
+                      <option value="All">All offices</option>
+                      {offices.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </label>
+                  <label className="db-filter-control">
+                    <span>Status</span>
+                    <select value={filters.status} onChange={setFilter('status')}>
+                      <option value="All">All</option>
+                      <option value="Draft">Draft</option>
+                      <option value="For Approval">For Approval</option>
+                      <option value="Completed">Completed</option>
+                    </select>
+                  </label>
+                  <label className="db-filter-control">
+                    <span>PPMP Type</span>
+                    <select value={filters.indicative} onChange={setFilter('indicative')}>
+                      <option value="All">All</option>
+                      <option value="Indicative">Indicative</option>
+                      <option value="Final">Final</option>
+                    </select>
+                  </label>
+                  <label className="db-filter-control">
+                    <span>Type</span>
+                    <select value={filters.type} onChange={setFilter('type')}>
+                      <option value="All">All</option>
+                      <option value="Consulting Services">Consulting Services</option>
+                      <option value="Goods">Goods</option>
+                      <option value="Infrastructure">Infrastructure</option>
+                    </select>
+                  </label>
+                  <label className="db-filter-control">
+                    <span>Category</span>
+                    <select value={filters.category} onChange={setFilter('category')}>
+                      <option value="All">All</option>
+                      <option value="General Requirements">General Requirements</option>
+                      <option value="Miscellaneous">Miscellaneous</option>
+                      <option value="Common Supplies and Equipment">Common Supplies and Equipment</option>
+                    </select>
+                  </label>
+                  <label className="db-filter-control db-search-control">
+                    <span>Search</span>
+                    <input type="search" placeholder="PPMP, user, description" value={filters.search} onChange={setFilter('search')} />
+                  </label>
                 </div>
+              </div>
+
+              <div className="db-entries-summary">
+                <span>
+                  {filteredRecords.length} {filteredRecords.length === 1 ? 'entry' : 'entries'} · {approvedCount} approved
+                </span>
               </div>
 
               <div className="db-entries-table-wrap">
                 <table className="db-entries-table">
                   <thead>
                     <tr>
-                      <th>PPMP No.</th>
+                      <th>No.</th>
+                      <th>PPMP</th>
+                      <th>Description</th>
                       <th>End-User</th>
-                      <th>Fiscal Year</th>
                       <th>Type</th>
                       <th>Budget</th>
                       <th>Status</th>
+                      <th>PPMP Type</th>
                       <th>Approved By</th>
-                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredRecords.map(r => (
-                      <React.Fragment key={r.id}>
-                        <tr>
-                          <td style={{ cursor: 'pointer', fontWeight: 'bold' }} onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}>
-                            {expandedId === r.id ? '▼' : '▶'} PPMP No. {r.ppmp_no}
-                          </td>
-                          <td>{r.end_user}</td>
-                          <td>{r.fiscal_year}</td>
-                          <td>{r.is_indicative}</td>
-                          <td>{formatPeso(calculateDeduplicatedBudget(getRecordItems(r)))}</td>
-                          <td>
-                            {isPpmpReturned(r) ? (
-                              <span
-                                className="db-status-pill is-returned"
-                                title={`Returned by ${r.rejected_by?.name || 'an approver'} - open the PPMP to read the remarks`}
-                              >
-                                Returned
-                              </span>
-                            ) : r.status === 'For Approval' && user?.canTrackApprovals ? (
-                              <span className="db-status-pill is-pending">
-                                For Approval · {getApprovalStep(r.currentApproverRole)?.label || r.currentApproverRole}
-                              </span>
-                            ) : (
-                              <span className={`db-status-pill ${r.status === 'Completed' ? 'is-completed' : (r.status === 'For Approval' ? 'is-pending' : 'is-draft')}`}>
-                                {r.status}
-                              </span>
-                            )}
-                          </td>
-                          <td>
-                            {r.status !== 'Completed' ? (
-                              <span className="db-approver-none">—</span>
-                            ) : r.approved_by ? (
-                              <div className="db-approver">
-                                <strong>{r.approved_by.name}</strong>
-                                <span>{formatApprovalDate(r.approved_at)}</span>
-                              </div>
-                            ) : (
-                              <span className="db-approver-none" title="This PPMP was completed before approver tracking existed">Not recorded</span>
-                            )}
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', gap: 6 }}>
-                              <button type="button" className="db-action-btn" title="View details" onClick={() => { setSelectedRecordId(r.id); setModalOpen(true); }}>
-                                View
-                              </button>
-                              <button type="button" className="db-action-btn" title="Export PDF" onClick={() => generatePPMP_PDF(r)}>
-                                PDF
-                              </button>
-                              <button type="button" className="db-action-btn" title="Export Excel" onClick={() => exportPPMP_Excel(r)}>
-                                XLSX
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-
-                        {/* Inline Expandable Sheet */}
-                        {expandedId === r.id && (
-                          <tr className="db-entry-expand-row">
-                            <td colSpan="8" style={{ padding: 12, background: 'var(--db-card-alt)' }}>
-                              <div style={{ overflowX: 'auto' }}>
-                                <table className="db-entries-table" style={{ background: '#fff', color: '#000' }}>
-                                  <thead>
-                                    <tr>
-                                      <th>Ref No.</th>
-                                      <th>Description</th>
-                                      <th>Type</th>
-                                      <th>Mode</th>
-                                      <th>Budget (PhP)</th>
-                                      <th>Remarks</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {getRecordItems(r).map((it, i) => (
-                                      <tr key={i}>
-                                        <td>{it.reference_no || '—'}</td>
-                                        <td>{it.project_description}</td>
-                                        <td>{it.project_type}</td>
-                                        <td>{it.mode}</td>
-                                        <td>{it.budget}</td>
-                                        <td>{it.remarks}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
+                    {filteredRecords.map((r) => {
+                      const isOpen = openId === r.id;
+                      const entryNumber = approvedNumbers.get(String(r.id));
+                      const ppmpType = r.is_indicative === 'Final' ? 'Final' : r.is_indicative === 'Indicative' ? 'Indicative' : 'N/A';
+                      return (
+                        <React.Fragment key={r.id}>
+                          <tr>
+                            <td
+                              className="db-entry-number"
+                              style={entryNumber ? undefined : { opacity: 0.4 }}
+                              title={entryNumber ? undefined : 'Numbered within its office once approved'}
+                            >
+                              {entryNumber || '—'}
+                            </td>
+                            <td
+                              className={`db-entry-ppmp-cell${isOpen ? ' is-expanded' : ''}`}
+                              onClick={() => toggleRow(r.id)}
+                              title={`${isOpen ? 'Hide' : 'Show'} Excel preview`}
+                            >
+                              <svg className="db-entry-chevron" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.4">
+                                <path d="M9 6L15 12L9 18" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                              <div>
+                                <strong>PPMP No. {r.ppmp_no || 'N/A'}</strong>
+                                <span>{r.fiscal_year || ''}</span>
                               </div>
                             </td>
+                            <td className="db-entry-description">{getRecordDescriptionSummary(r)}</td>
+                            <td>{r.end_user || 'N/A'}</td>
+                            <td>{getRecordProjectTypeSummary(r)}</td>
+                            <td>{formatPeso(getRecordTotalBudget(r))}</td>
+                            <td><StatusPill record={r} user={user} /></td>
+                            <td>
+                              {ppmpType === 'N/A'
+                                ? 'N/A'
+                                : <span className={`db-status-pill ${ppmpType === 'Final' ? 'is-type-final' : 'is-type-indicative'}`}>{ppmpType}</span>}
+                            </td>
+                            <td><ApprovedByCell record={r} /></td>
                           </tr>
-                        )}
-                      </React.Fragment>
-                    ))}
+
+                          {isOpen && (
+                            <tr className="db-entry-expand-row">
+                              <td colSpan="9">
+                                <PpmpExpanded
+                                  key={r.id}
+                                  record={r}
+                                  user={user}
+                                  onView={() => openRecord(r.id)}
+                                  onDelete={() => requestDelete(r)}
+                                  onSubmit={() => requestSubmit(r)}
+                                  onPdf={() => generatePPMP_PDF(r)}
+                                  onXlsx={() => exportPPMP_Excel(r)}
+                                  onSaved={loadData}
+                                  onToast={setToast}
+                                  onDirtyChange={handleDirtyChange}
+                                />
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
+                {filteredRecords.length === 0 && (
+                  <div className="db-entries-empty">No PPMP entries match the current filters.</div>
+                )}
               </div>
             </>
           )}
@@ -227,19 +460,20 @@ export default function Entries() {
                   </tr>
                 </thead>
                 <tbody>
-                  {apps.map(a => (
+                  {apps.map((a) => (
                     <tr key={a.fiscal_year}>
                       <td>FY {a.fiscal_year}</td>
                       <td>Annual Procurement Plan for FY {a.fiscal_year}</td>
-                      <td>
-                        <span className={`db-status-pill ${a.status === 'Completed' ? 'is-completed' : (a.status === 'For Approval' ? 'is-pending' : 'is-draft')}`}>
-                          {a.status}
-                        </span>
-                      </td>
+                      <td><span className={`db-status-pill ${statusClass(a.status)}`}>{a.status}</span></td>
                       <td>{a.currentApproverRole || '—'}</td>
                       <td>{a.submitted_by?.name || '—'}</td>
                       <td>
-                        <button type="button" className="db-action-btn" style={{ width: 'auto', padding: '6px 14px' }} onClick={() => setAppModalYear(a.fiscal_year)}>
+                        <button
+                          type="button"
+                          className="db-action-btn"
+                          style={{ width: 'auto', padding: '6px 14px' }}
+                          onClick={() => setAppModalYear(a.fiscal_year)}
+                        >
                           Open APP &rarr;
                         </button>
                       </td>
@@ -249,11 +483,15 @@ export default function Entries() {
               </table>
             </div>
           )}
-        </div>
+        </section>
       </main>
 
       <RequestModal isOpen={modalOpen} onClose={() => setModalOpen(false)} recordId={selectedRecordId} onSaved={loadData} />
-      {appModalYear && <AppPreviewModal isOpen={!!appModalYear} onClose={() => setAppModalYear(null)} fiscalYear={appModalYear} onUpdated={loadData} />}
+      {appModalYear && (
+        <AppPreviewModal isOpen={!!appModalYear} onClose={() => setAppModalYear(null)} fiscalYear={appModalYear} onUpdated={loadData} />
+      )}
+      <ConfirmDialog dialog={dialog} onCancel={() => setDialog(null)} onConfirm={confirmDialog} />
+      <div className={`db-toast${toast ? ' show' : ''}`} role="status">{toast}</div>
     </div>
   );
 }
