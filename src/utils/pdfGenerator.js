@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import {
   getLatestApprovedPpmpPerOffice,
   getRecordItems,
@@ -8,6 +8,16 @@ import {
   calculateDeduplicatedBudget,
   getAppRecord
 } from './procurementRules.js';
+
+function renderTable(doc, options) {
+  if (typeof doc.autoTable === 'function') {
+    doc.autoTable(options);
+  } else if (typeof autoTable === 'function') {
+    autoTable(doc, options);
+  } else if (autoTable && typeof autoTable.default === 'function') {
+    autoTable.default(doc, options);
+  }
+}
 
 export async function generatePPMP_PDF(record) {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
@@ -79,7 +89,7 @@ export async function generatePPMP_PDF(record) {
     '', '', '', ''
   ]);
 
-  doc.autoTable({
+  renderTable(doc, {
     startY: currentY + 10,
     head: headers,
     body: bodyRows,
@@ -88,7 +98,7 @@ export async function generatePPMP_PDF(record) {
     headStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' }
   });
 
-  const finalY = doc.lastAutoTable.finalY + 12;
+  const finalY = (doc.lastAutoTable?.finalY ?? (currentY + 60)) + 12;
   doc.setFontSize(7);
   doc.text('Prepared by / Submitted by:', margin, finalY);
   doc.line(margin, finalY + 8, margin + 60, finalY + 8);
@@ -210,7 +220,7 @@ export async function buildAPP_PDF(targetYear = null) {
     ]
   ];
 
-  doc.autoTable({
+  renderTable(doc, {
     startY: currentY,
     head: headers,
     body: tableBody,
@@ -219,7 +229,7 @@ export async function buildAPP_PDF(targetYear = null) {
     headStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' }
   });
 
-  const finalY = doc.lastAutoTable.finalY + 12;
+  const finalY = (doc.lastAutoTable?.finalY ?? (currentY + 60)) + 12;
   doc.setFontSize(7);
   doc.text('Prepared by / Submitted by:', margin, finalY);
   doc.line(margin, finalY + 8, margin + 60, finalY + 8);
