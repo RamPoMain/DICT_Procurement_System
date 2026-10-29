@@ -57,6 +57,7 @@ export default function Dashboard() {
   const [pendingDeleteId, setPendingDeleteId] = useState(null);
   const [previewRecordId, setPreviewRecordId] = useState(null);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkHeader, setBulkHeader] = useState(null); // form values handed over from the request form
   const [toast, setToast] = useState('');
   const toastTimer = useRef(null);
 
@@ -228,7 +229,7 @@ export default function Dashboard() {
                   color: 'var(--db-accent, #3b82f6)',
                   border: '1px solid var(--db-accent, #3b82f6)'
                 }}
-                onClick={() => setBulkModalOpen(true)}
+                onClick={() => { setBulkHeader(null); setBulkModalOpen(true); }}
               >
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 15V4m0 0L8 8m4-4l4 4M5 20h14" />
@@ -382,7 +383,8 @@ export default function Dashboard() {
         onClose={() => setModalOpen(false)}
         recordId={selectedRecordId}
         onSaved={loadData}
-        onBulkImport={() => {
+        onBulkImport={(formHeader) => {
+          setBulkHeader(formHeader || null);
           setModalOpen(false);
           setBulkModalOpen(true);
         }}
@@ -390,9 +392,12 @@ export default function Dashboard() {
       <BulkImportModal
         isOpen={bulkModalOpen}
         onClose={() => setBulkModalOpen(false)}
-        onSuccess={() => {
+        headerData={bulkHeader}
+        onSuccess={(res) => {
           loadData();
-          showToast('Bulk items imported successfully!');
+          showToast(`${res.count} ${res.count === 1 ? 'item' : 'items'} imported under PPMP No. ${res.ppmp_no}.` +
+            (res.converted ? ` ${res.converted} switched to Two Failed Biddings.` : '') +
+            ' Attach the supporting documents before submitting.');
         }}
       />
       {appModalYear && (

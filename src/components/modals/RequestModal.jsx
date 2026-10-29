@@ -28,35 +28,17 @@ import {
 } from '../../utils/procurementRules.js';
 import { generatePPMP_PDF } from '../../utils/pdfGenerator.js';
 import FileStore from '../../utils/fileStore.js';
-import BulkImportModal from './BulkImportModal.jsx';
+import { getNextPpmpNumber } from '../../utils/ppmpNumber.js';
+import {
+  BID_CRITERIA_OPTIONS,
+  STRATEGY_OPTIONS,
+  GENERAL_REQUIREMENT_OPTIONS as GENERAL_REQ_OPTIONS,
+  EXPENSE_CLASS_OPTIONS
+} from '../../utils/procurementOptions.js';
 import FilePreviewModal from './FilePreviewModal.jsx';
 
-// NOTE: the original form keeps these options in its HTML (not in the JS), so this is a
-// placeholder list. Replace it with the exact <option> values from your original page.
-// 'Negotiated' is added automatically when two failed biddings lock the mode.
-const BID_CRITERIA_OPTIONS = [
-  'Lowest Calculated Responsive Bid (LCRB)',
-  'Most Economically Advantageous Responsive Bid (MEARB)',
-  'Quality-Based Evaluation (QBE)',
-  'Quality-Cost Based Evaluation (QCBE)',
-  'Fixed Budget Selection (FBS)',
-  'Least-Cost Selection (LCS)',
-  'N/A'
-];
-
-// NOTE: these three lists live in the original HTML, so they are best-effort placeholders.
-// The strategy list starts with the three seen in your original screenshot - replace/extend
-// it with the exact options from your original page.
-const STRATEGY_OPTIONS = [
-  'Multi-Year Contracting',
-  'Subcontracting',
-  'Life Cycle Assessment (LCA) and LCCA',
-  'Framework Agreement',
-  'Early Procurement Activities',
-  'N/A'
-];
-const GENERAL_REQ_OPTIONS = ['General Requirements', 'Miscellaneous', 'Common Supplies and Equipment'];
-const EXPENSE_CLASS_OPTIONS = ['MOOE', 'CO', 'N/A'];
+// BID_CRITERIA_OPTIONS, STRATEGY_OPTIONS, GENERAL_REQ_OPTIONS and EXPENSE_CLASS_OPTIONS now live in
+// utils/procurementOptions.js so the form and the Excel import always agree.
 const PROJECT_TYPE_DOC_LABELS = {
   'Goods': 'Technical Specifications',
   'Consulting Services': 'Terms of Reference',
@@ -93,7 +75,6 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
   const [notice, setNotice] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
@@ -126,8 +107,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   // Next PPMP number for this office + fiscal year (shown read-only on a new request)
   function nextPpmpNo(fy) {
     const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
-    const n = all.filter(r => r.end_user === user?.office && String(r.fiscal_year) === String(fy)).length + 1;
-    return String(n);
+    return getNextPpmpNumber(all, user?.office, fy);
   }
 
   useEffect(() => {
@@ -323,10 +303,9 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         records[idx].is_indicative = headerData.is_indicative;
       }
     } else {
-      const officeRecords = records.filter(r => r.end_user === user.office && String(r.fiscal_year) === String(headerData.fiscal_year));
       const newRec = {
         id: Date.now(),
-        ppmp_no: String(officeRecords.length + 1),
+        ppmp_no: getNextPpmpNumber(records, user.office, headerData.fiscal_year),
         fiscal_year: headerData.fiscal_year,
         end_user: user.office,
         is_indicative: headerData.is_indicative,
@@ -534,7 +513,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
             <button
               type="button"
               className="db-modal-pdf-btn"
-              onClick={onBulkImport}
+              onClick={() => onBulkImport(headerData)}
             >
               &#8593; Bulk import
             </button>
@@ -1194,18 +1173,6 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         )}
 
         <div className={`db-toast ${notice ? 'show' : ''}`} style={{ zIndex: 3100 }}>{notice}</div>
-
-        <BulkImportModal
-          isOpen={bulkModalOpen}
-          onClose={() => setBulkModalOpen(false)}
-          headerData={headerData}
-          recordId={recordId}
-          onSuccess={(_result) => {
-            setBulkModalOpen(false);
-            if (onSaved) onSaved();
-            onClose();
-          }}
-        />
 
         <FilePreviewModal
           isOpen={!!previewDoc}

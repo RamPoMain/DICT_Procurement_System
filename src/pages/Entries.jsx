@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Sidebar from '../components/layout/Sidebar.jsx';
 import RequestModal from '../components/modals/RequestModal.jsx';
+import BulkImportModal from '../components/modals/BulkImportModal.jsx';
 import AppPreviewModal from '../components/modals/AppPreviewModal.jsx';
 import PpmpExpanded from '../components/entries/PpmpExpanded.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -134,6 +135,8 @@ export default function Entries() {
   const [appModalYear, setAppModalYear] = useState(null);
   const [dialog, setDialog] = useState(null);
   const [toast, setToast] = useState('');
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkHeader, setBulkHeader] = useState(null);
   // True while the open PPMP has unsaved inline edits (reported by PpmpExpanded).
   const dirtyRef = useRef(false);
   const handleDirtyChange = useCallback((isDirty) => { dirtyRef.current = isDirty; }, []);
@@ -486,7 +489,28 @@ export default function Entries() {
         </section>
       </main>
 
-      <RequestModal isOpen={modalOpen} onClose={() => setModalOpen(false)} recordId={selectedRecordId} onSaved={loadData} />
+      <RequestModal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        recordId={selectedRecordId}
+        onSaved={loadData}
+        onBulkImport={(formHeader) => {
+          setBulkHeader(formHeader || null);
+          setModalOpen(false);
+          setBulkOpen(true);
+        }}
+      />
+      <BulkImportModal
+        isOpen={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        headerData={bulkHeader}
+        onSuccess={(res) => {
+          loadData();
+          setToast(`${res.count} ${res.count === 1 ? 'item' : 'items'} imported under PPMP No. ${res.ppmp_no}.` +
+            (res.converted ? ` ${res.converted} switched to Two Failed Biddings.` : '') +
+            ' Attach the supporting documents before submitting.');
+        }}
+      />
       {appModalYear && (
         <AppPreviewModal isOpen={!!appModalYear} onClose={() => setAppModalYear(null)} fiscalYear={appModalYear} onUpdated={loadData} />
       )}

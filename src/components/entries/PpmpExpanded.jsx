@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import BulkImportModal from '../modals/BulkImportModal.jsx';
 import {
   getRecordItems,
   isPpmpDraft,
@@ -191,7 +193,7 @@ const PlusIcon = ({ size = 13 }) => (
 function Toolbar({
   record, user, editing, dirty, canEdit, confirmingDiscard,
   onView, onDelete, onSubmit, onPdf, onXlsx,
-  onEdit, onAddItem, onCancel, onKeepEditing, onDiscard, onSave
+  onEdit, onAddItem, onBulkImport, onCancel, onKeepEditing, onDiscard, onSave
 }) {
   const draft = isPpmpDraft(record);
   const canReq = !!user?.canRequest;
@@ -247,6 +249,13 @@ function Toolbar({
           {canEdit && (
             <button type="button" className="db-action-btn" title="Add another entry to this PPMP" onClick={onAddItem}>
               <PlusIcon size={14} />
+            </button>
+          )}
+          {canEdit && (
+            <button type="button" className="db-action-btn" title="Bulk import items from Excel into this PPMP" onClick={onBulkImport}>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 15V4m0 0L8 8m4-4l4 4M5 20h14" />
+              </svg>
             </button>
           )}
           <button type="button" className="db-action-btn" title="View Details" onClick={onView}>
@@ -524,6 +533,7 @@ export default function PpmpExpanded({
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const [pending, setPending] = useState({ count: 0, bytes: 0 });
   const [focusId, setFocusId] = useState(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const editSession = useRef(0);       // bumps on every start/stop of editing
   const addedFiles = useRef([]);       // files stored during this edit (cleaned up on discard)
@@ -762,7 +772,7 @@ export default function PpmpExpanded({
         record={record} user={user}
         editing={editing} dirty={dirty} canEdit={canEdit} confirmingDiscard={confirmingDiscard}
         onView={onView} onDelete={onDelete} onSubmit={onSubmit} onPdf={onPdf} onXlsx={onXlsx}
-        onEdit={startEdit} onAddItem={addItem} onCancel={requestCancel}
+        onEdit={startEdit} onAddItem={addItem} onBulkImport={() => setBulkOpen(true)} onCancel={requestCancel}
         onKeepEditing={() => setConfirmingDiscard(false)} onDiscard={discard} onSave={save}
       />
       {!editing && items.length >= 2 && (
@@ -916,6 +926,28 @@ export default function PpmpExpanded({
           </table>
         </div>
       </div>
+
+      {/* Rendered in <body> so the dialog is never clipped by the expanding table row. */}
+      {bulkOpen && createPortal(
+        <BulkImportModal
+          isOpen={bulkOpen}
+          onClose={() => setBulkOpen(false)}
+          recordId={record.id}
+          headerData={{
+            ppmp_no: record.ppmp_no,
+            fiscal_year: record.fiscal_year,
+            end_user: record.end_user,
+            is_indicative: record.is_indicative
+          }}
+          onSuccess={(res) => {
+            if (onSaved) onSaved();
+            toast(`${res.count} ${res.count === 1 ? 'item' : 'items'} added to PPMP No. ${res.ppmp_no}.` +
+              (res.converted ? ` ${res.converted} switched to Two Failed Biddings.` : '') +
+              ' Attach the supporting documents before submitting.');
+          }}
+        />,
+        document.body
+      )}
     </div>
   );
 }

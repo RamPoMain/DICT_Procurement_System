@@ -1,53 +1,35 @@
 import ExcelJS from 'exceljs';
-import * as XLSX from 'xlsx';
 import {
   PROCUREMENT_MODE_RULES,
   STANDARD_PROCUREMENT_MODES,
   isBracketMismatch,
   exceedsModeCeiling,
   budgetBracketMessage,
-  isBracketMode,
+  formatPesoMessage,
   claimEntryRef,
   findExistingReferenceInfo,
+  tagFailedAttempts,
   getRecordItems,
-  getPpmpStatus
+  getPpmpStatus,
+  isAppFinal
 } from './procurementRules.js';
+import { getNextPpmpNumber } from './ppmpNumber.js';
+import {
+  PROJECT_TYPES,
+  GENERAL_REQUIREMENT_OPTIONS,
+  BID_CRITERIA_OPTIONS,
+  STRATEGY_OPTIONS,
+  FAILED_BIDDING_MODE,
+  NEGOTIATED_CRITERIA
+} from './procurementOptions.js';
+
+// Re-exported so existing imports from bulkImport.js keep working.
+export { GENERAL_REQUIREMENT_OPTIONS, BID_CRITERIA_OPTIONS, STRATEGY_OPTIONS };
 
 export const TEMPLATE_SHEET = 'PPMP Items';
 export const TEMPLATE_FILE = 'PPMP_Items_Template.xlsx';
 export const MAX_IMPORT_BYTES = 5 * 1024 * 1024; // 5 MB
 export const MAX_IMPORT_ROWS = 200;
-
-export const GENERAL_REQUIREMENT_OPTIONS = [
-  'General Requirements',
-  'Miscellaneous',
-  'Common Supplies and Equipment'
-];
-
-export const BID_CRITERIA_OPTIONS = [
-  'Lowest Calculated Responsive Bid (LCRB)',
-  'Most Economically Advantageous Responsive Bid (MEARB)',
-  'Quality-Based Evaluation (QBE)',
-  'Quality-Cost Based Evaluation (QCBE)',
-  'Fixed Budget Selection (FBS)',
-  'Least-Cost Selection (LCS)',
-  'Negotiated',
-  'N/A'
-];
-
-export const STRATEGY_OPTIONS = [
-  'Multi-Year Contracting',
-  'Subcontracting',
-  'Life Cycle Assessment (LCA) and LCCA',
-  'Framework Agreement',
-  'Early Procurement Activities',
-  'Design-and-Build Scheme for Infrastructure',
-  'Engagement of a Procurement Agent',
-  'Pooled Procurement Section 17',
-  'Renewal of Regular and Recurring Services',
-  'Warehousing and Inventory Activities',
-  'N/A'
-];
 
 export const COLUMNS = [
   { key: 'project_description', label: 'Description', match: /description|objective/, width: 36, header: 'General Description and Objective of the Project to be Procured' },
@@ -211,22 +193,25 @@ export function validateRow(raw) {
   else if (!/^\d+$/.test(objectName)) errors.push('Object Code must be numbers only.');
   item.object_name = objectName;
 
-  const allowedTypes = ['Goods', 'Infrastructure', 'Consulting Services'];
-  const type = canonical(raw.project_type, allowedTypes);
-  if (!type) errors.push(`Type of Project must be one of: ${allowedTypes.join(', ')}.`);
+  const type = canonical(raw.project_type, PROJECT_TYPES);
+  if (!type) errors.push(`Type of Project must be one of: ${PROJECT_TYPES.join(', ')}.`);
   item.project_type = type || '';
 
   const quantity = text('quantity_size');
   if (quantity.length < 3) errors.push('Quantity and Size is required (at least 3 characters).');
   item.quantity_size = quantity;
 
-  const validModes = [
-    ...STANDARD_PROCUREMENT_MODES,
-    'Negotiated Procurement – Two Failed Biddings',
-    'Negotiated Procurement - Two Failed Biddings'
-  ];
-  const mode = canonical(raw.mode, validModes);
-  if (!mode) errors.push('Mode of Procurement is missing or not a recognized mode.');
+  // Same list the form offers. "Two Failed Biddings" can NOT be typed in the file:
+  // it is assigned automatically at import when the system finds two earlier
+  // competitive biddings of the same project (RA 12009 Sec. 33).
+  const mode = canonical(raw.mode, STANDARD_PROCUREMENT_MODES);
+  if (!mode) {
+    errors.push(
+      /failed\s+bidding/i.test(str(raw.mode))
+        ? 'Two Failed Biddings is set automatically when a project has two earlier competitive biddings. Enter the usual mode (e.g. Competitive Bidding) instead.'
+        : 'Mode of Procurement is missing or not a recognized mode.'
+    );
+  }
   item.mode = mode || '';
 
   const pre = canonical(raw.pre_procurement, ['Yes', 'No']);
@@ -234,7 +219,13 @@ export function validateRow(raw) {
   item.pre_procurement = pre || '';
 
   const criteria = canonical(raw.bid_evaluation_criteria, BID_CRITERIA_OPTIONS);
-  if (!criteria) errors.push('Criteria for Bid Evaluation is missing or invalid.');
+  if (!criteria) {
+    errors.push(
+      str(raw.bid_evaluation_criteria).toLowerCase() === NEGOTIATED_CRITERIA.toLowerCase()
+        ? '"Negotiated" is assigned automatically together with Two Failed Biddings. Pick one of the listed criteria.'
+        : 'Criteria for Bid Evaluation is missing or invalid.'
+    );
+  }
   item.bid_evaluation_criteria = criteria || '';
 
   const start = toIsoDate(raw.start_date);
@@ -281,8 +272,8 @@ export function validateRow(raw) {
   } else {
     item.budget = budget.text;
 
-    // Check RA 12009 Procurement Mode rules
-    if (mode && !mode.includes('Two Failed Biddings') && mode !== 'Negotiated Procurement') {
+    // Same mode/budget rules as the form (RA 12009)
+    if (mode && mode !== 'Negotiated Procurement') {
       const rule = PROCUREMENT_MODE_RULES[mode];
       if (rule) {
         if (type && rule.allowedTypes && !rule.allowedTypes.includes(type)) {
@@ -290,7 +281,7 @@ export function validateRow(raw) {
         } else if (isBracketMismatch(mode, budget.number)) {
           errors.push(budgetBracketMessage(mode, budget.number));
         } else if (exceedsModeCeiling(mode, budget.number)) {
-          errors.push(`Budget of ₱${budget.number.toLocaleString('en-PH')} exceeds allowable limit for ${mode}.`);
+          errors.push(`Budget of ${formatPesoMessage(budget.number)} exceeds the allowable limit for ${mode} (${rule.legalBasis}).`);
         }
       }
     }
@@ -663,11 +654,12 @@ export async function downloadBulkTemplate({ ppmp_no, fiscal_year, end_user, is_
     ['Dates', 'Dates must be formatted as YYYY-MM-DD (e.g. 2026-10-01). Advertisement <= Bid Opening <= Notice of Award <= Contract Signing < Delivery.'],
     ['Budget', 'A positive number greater than 0. The mode must match the budget bracket.'],
     ['Strategies', 'One or more allowed strategies separated by semicolon or newline.'],
+    ['Re-bids', 'Enter the usual mode (e.g. Competitive Bidding). If the same project (same description, same office) already has two competitive biddings, the system switches it to Negotiated Procurement – Two Failed Biddings automatically.'],
     ['Supporting Documents', 'Leave blank. Files cannot be imported via spreadsheet; attach them to each item via Edit before submitting.'],
     ['General Requirements', `Optional. Choose one of: ${GENERAL_REQUIREMENT_OPTIONS.join(', ')} (or leave blank).`],
     ['Do Not Change', 'Do not rename header rows, the sheet name, or the signature blocks.'],
     ['', ''],
-    ['Type of the Project', ['Goods', 'Infrastructure', 'Consulting Services'].join('\n')],
+    ['Type of the Project', PROJECT_TYPES.join('\n')],
     ['Recommended Mode of Procurement', STANDARD_PROCUREMENT_MODES.join('\n')],
     ['Pre-Procurement Conference', 'Yes\nNo'],
     ['Criteria for Bid Evaluation', BID_CRITERIA_OPTIONS.join('\n')],
@@ -696,44 +688,75 @@ export async function downloadBulkTemplate({ ppmp_no, fiscal_year, end_user, is_
   URL.revokeObjectURL(url);
 }
 
-export function commitImportedItems({ items, headerData, user, targetRecordId = null }) {
-  const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
+const RECORDS_KEY = 'procurement_records';
+
+function readRecords() {
+  try {
+    return JSON.parse(localStorage.getItem(RECORDS_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Saves validated rows as line items.
+ *  - targetRecordId == null -> creates a new Draft PPMP (number, fiscal year and
+ *    office come from headerData / user).
+ *  - targetRecordId given   -> appends to that Draft PPMP and uses ITS fiscal
+ *    year, office and number for everything (headerData is ignored).
+ * Throws an Error with a user-readable message when it can't import.
+ * Returns { ppmp_no, fiscal_year, count, converted } where `converted` is how
+ * many rows were switched to Two Failed Biddings.
+ */
+export function commitImportedItems({ items, headerData = {}, user, targetRecordId = null }) {
+  if (!user?.canRequest) {
+    throw new Error('Your account is view/approve only and cannot import items.');
+  }
+
+  const records = readRecords();
   const stamp = Date.now();
-  const fiscalYear = headerData.fiscal_year || new Date().getFullYear().toString();
-  const endUser = headerData.end_user || user?.office || 'DICT';
-  const isIndicative = headerData.is_indicative || 'Indicative';
 
   const stamped = items.map((item, i) => ({
     ...item,
     id: stamp + i,
+    expense_class: item.expense_class || 'N/A', // the form requires one; the template has no column for it
     supporting_documents: []
   }));
 
-  let targetRec = targetRecordId ? records.find(r => r.id === targetRecordId) : null;
-  let ppmpNo;
   let finalRecords = [...records];
+  let target;           // the record the items land in
+  let baseItems;        // items that were already saved in it
+  let ppmpNo;
+  let fiscalYear;
+  let endUser;
 
-  if (targetRec) {
-    if (getPpmpStatus(targetRec) !== 'Draft') {
+  if (targetRecordId != null) {
+    const idx = finalRecords.findIndex(r => r.id === targetRecordId);
+    if (idx === -1) throw new Error('That PPMP could not be found. It may have been deleted.');
+    const existing = finalRecords[idx];
+    if (getPpmpStatus(existing) !== 'Draft') {
       throw new Error('This PPMP was submitted or approved in the meantime, so items can no longer be added.');
     }
-    const merged = [...getRecordItems(targetRec), ...stamped];
-    const targetIdx = finalRecords.findIndex(r => r.id === targetRec.id);
-    finalRecords[targetIdx] = {
-      ...targetRec,
-      items: merged
-    };
-    targetRec = finalRecords[targetIdx];
-    ppmpNo = targetRec.ppmp_no;
+    // Everything below follows the TARGET PPMP, not the dialog's defaults.
+    fiscalYear = String(existing.fiscal_year);
+    endUser = existing.end_user;
+    ppmpNo = existing.ppmp_no;
+    baseItems = Array.isArray(existing.items) ? existing.items : getRecordItems(existing);
+    finalRecords[idx] = { ...existing, items: [...baseItems, ...stamped] };
+    target = finalRecords[idx];
   } else {
-    const officeRecords = finalRecords.filter(r => r.end_user === endUser && String(r.fiscal_year) === String(fiscalYear));
-    ppmpNo = String(officeRecords.length + 1);
-
-    const newRec = {
+    fiscalYear = String(headerData.fiscal_year || new Date().getFullYear());
+    endUser = headerData.end_user || user?.office || 'DICT';
+    if (isAppFinal(fiscalYear)) {
+      throw new Error(`The APP for FY ${fiscalYear} is already final, so a new PPMP cannot be created under it.`);
+    }
+    ppmpNo = getNextPpmpNumber(finalRecords, endUser, fiscalYear);
+    baseItems = [];
+    target = {
       id: stamp,
       creatorId: user?.id || null,
       ppmp_no: ppmpNo,
-      is_indicative: isIndicative,
+      is_indicative: headerData.is_indicative || 'Indicative',
       end_user: endUser,
       fiscal_year: fiscalYear,
       items: stamped,
@@ -742,32 +765,54 @@ export function commitImportedItems({ items, headerData, user, targetRecordId = 
       remarksHistory: [],
       date: new Date().toLocaleDateString()
     };
-    finalRecords.push(newRec);
-    targetRec = newRec;
+    finalRecords.push(target);
   }
 
-  // Issue reference numbers and check Two Failed Biddings
-  const pool = (targetRec.items || []).filter(it => !stamped.some(s => s.id === it.id));
-  stamped.forEach(it => {
-    if (!it.reference_no) {
-      const refInfo = findExistingReferenceInfo(it.project_description, it.project_type, { id: targetRec.id, end_user: endUser, items: pool }, endUser);
-      if (refInfo) {
-        it.reference_no = refInfo.reference_no;
-        if (refInfo.competitiveCount >= 2) {
-          it.mode = 'Negotiated Procurement – Two Failed Biddings';
-          it.bid_evaluation_criteria = 'Negotiated';
-          const autoNote = 'Negotiated Procurement after Two Failed Biddings (RA 12009 Sec. 33)';
-          if (!it.remarks || !it.remarks.includes('Two Failed Biddings')) {
-            it.remarks = it.remarks ? `${it.remarks} [${autoNote}]` : autoNote;
-          }
-        }
-      } else {
-        it.reference_no = claimEntryRef(finalRecords, it.project_type, fiscalYear);
-      }
+  // Reference numbers, same rules as the form:
+  //  - an earlier entry of the same project (same description, same office) keeps
+  //    its reference number; after two earlier competitive biddings the row becomes
+  //    Negotiated Procurement – Two Failed Biddings (Sec. 33);
+  //  - otherwise a new <year>-<category>-<number> reference is issued.
+  // Only entries that were ALREADY SAVED count as earlier attempts. Rows from this
+  // same file never do — two rows with the same description are two separate
+  // entries, so each keeps its own reference and its own budget in the totals.
+  const lookupRecord = { id: target.id, end_user: endUser, items: baseItems };
+  const failedBiddingDescriptions = [];
+
+  stamped.forEach((it) => {
+    const refInfo = findExistingReferenceInfo(it.project_description, it.project_type, lookupRecord, endUser);
+    if (refInfo?.reference_no) {
+      it.reference_no = refInfo.reference_no;
+    } else {
+      it.reference_no = claimEntryRef(finalRecords, it.project_type, fiscalYear);
     }
-    pool.push(it);
+    if (refInfo && refInfo.competitiveCount >= 2) {
+      it.mode = FAILED_BIDDING_MODE;
+      it.bid_evaluation_criteria = NEGOTIATED_CRITERIA;
+      const autoNote = 'Negotiated Procurement after Two Failed Biddings (RA 12009 Sec. 33)';
+      if (!it.remarks || !it.remarks.includes('Two Failed Biddings')) {
+        it.remarks = it.remarks ? `${it.remarks} [${autoNote}]` : autoNote;
+      }
+      failedBiddingDescriptions.push(it.project_description);
+    }
   });
 
-  localStorage.setItem('procurement_records', JSON.stringify(finalRecords));
-  return { ppmp_no: ppmpNo, count: stamped.length };
+  // Same follow-up the form does on save: mark the earlier attempts [1st Failure] / [2nd Failure].
+  failedBiddingDescriptions.forEach((desc) => {
+    finalRecords = tagFailedAttempts(finalRecords, desc, endUser);
+  });
+
+  try {
+    localStorage.setItem(RECORDS_KEY, JSON.stringify(finalRecords));
+  } catch (err) {
+    console.error('Bulk import: could not save', err);
+    throw new Error('The items could not be saved (browser storage is full).');
+  }
+
+  return {
+    ppmp_no: ppmpNo,
+    fiscal_year: fiscalYear,
+    count: stamped.length,
+    converted: failedBiddingDescriptions.length
+  };
 }

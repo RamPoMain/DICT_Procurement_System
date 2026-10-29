@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import {
@@ -8,6 +8,16 @@ import {
   MAX_IMPORT_BYTES,
   MAX_IMPORT_ROWS
 } from '../../utils/bulkImport.js';
+import { getNextPpmpNumber } from '../../utils/ppmpNumber.js';
+import { isAppFinal } from '../../utils/procurementRules.js';
+
+function readRecords() {
+  try {
+    return JSON.parse(localStorage.getItem('procurement_records')) || [];
+  } catch {
+    return [];
+  }
+}
 
 export default function BulkImportModal({ isOpen, onClose, headerData, recordId, onSuccess }) {
   const { user } = useAuth();
@@ -17,14 +27,60 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
   const [selectedFile, setSelectedFile] = useState(null);
   const [reviewResult, setReviewResult] = useState(null); // { fatal, ready, problems, total }
   const [ppmpType, setPpmpType] = useState(headerData?.is_indicative || 'Indicative');
+  const [fiscalYear, setFiscalYear] = useState(headerData?.fiscal_year || new Date().getFullYear().toString());
   const [errorToast, setErrorToast] = useState('');
   const fileInputRef = useRef(null);
 
+  const isAddingToExisting = !!recordId;
+  const thisYear = new Date().getFullYear();
+  const currentOffice = headerData?.end_user || user?.office || 'DICT';
+
+  // Start fresh every time the dialog opens (it stays mounted on the Dashboard).
+  useEffect(() => {
+    if (!isOpen) return;
+    setReviewResult(null);
+    setSelectedFile(null);
+    setErrorToast('');
+    setParsing(false);
+    setPpmpType(headerData?.is_indicative || 'Indicative');
+    setFiscalYear(String(headerData?.fiscal_year || new Date().getFullYear()));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  // Esc closes only this dialog, not the form behind it.
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      e.preventDefault();
+      handleClose();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  // The real number the import will use (matches what commitImportedItems issues).
+  const ppmpNo = useMemo(
+    () => (isAddingToExisting
+      ? (headerData?.ppmp_no || '-')
+      : getNextPpmpNumber(readRecords(), currentOffice, fiscalYear)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isOpen, isAddingToExisting, headerData?.ppmp_no, currentOffice, fiscalYear]
+  );
+
+  // Fiscal years a new PPMP can be planned for: last, this and next year.
+  const yearOptions = useMemo(() => {
+    const set = new Set([thisYear - 1, thisYear, thisYear + 1, Number(fiscalYear)].filter(Boolean));
+    return [...set].sort((a, b) => a - b).map(String);
+  }, [thisYear, fiscalYear]);
+
+  const yearIsClosed = !isAddingToExisting && isOpen && isAppFinal(fiscalYear);
+
   if (!isOpen) return null;
 
-  const currentYear = headerData?.fiscal_year || new Date().getFullYear().toString();
-  const currentOffice = headerData?.end_user || user?.office || 'DICT';
-  const ppmpNo = headerData?.ppmp_no || '1';
+  const currentYear = isAddingToExisting ? String(headerData?.fiscal_year || fiscalYear) : fiscalYear;
 
   const handleDownload = async () => {
     try {
@@ -99,6 +155,7 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
         items: reviewResult.ready.map(r => r.item),
         headerData: {
           ...headerData,
+          ppmp_no: ppmpNo,
           fiscal_year: currentYear,
           end_user: currentOffice,
           is_indicative: ppmpType
@@ -123,7 +180,6 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
     onClose();
   };
 
-  const isAddingToExisting = !!recordId;
   const targetDescription = isAddingToExisting
     ? `Items will be added to existing PPMP No. ${ppmpNo}.`
     : `Items will create a new Draft PPMP: No. ${ppmpNo}, FY ${currentYear}, ${currentOffice}.`;
@@ -172,13 +228,27 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
                   <p>Every row will be checked against government procurement guidelines before anything is saved.</p>
 
                   {!isAddingToExisting && (
-                    <label className="bi-type-field">
-                      <span>PPMP type for these items</span>
-                      <select value={ppmpType} onChange={(e) => setPpmpType(e.target.value)}>
-                        <option value="Indicative">Indicative</option>
-                        <option value="Final">Final</option>
-                      </select>
-                    </label>
+                    <>
+                      <label className="bi-type-field">
+                        <span>Fiscal year</span>
+                        <select value={fiscalYear} onChange={(e) => setFiscalYear(e.target.value)}>
+                          {yearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
+                        </select>
+                      </label>
+                      <label className="bi-type-field">
+                        <span>PPMP type for these items</span>
+                        <select value={ppmpType} onChange={(e) => setPpmpType(e.target.value)}>
+                          <option value="Indicative">Indicative</option>
+                          <option value="Final">Final</option>
+                        </select>
+                      </label>
+                      {yearIsClosed && (
+                        <p className="bi-fatal" style={{ marginTop: 8 }}>
+                          The APP for FY {fiscalYear} is already final, so a new PPMP cannot be created under it.
+                          Choose another fiscal year.
+                        </p>
+                      )}
+                    </>
                   )}
 
                   <div
@@ -321,7 +391,7 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
                 {reviewResult.ready.length > 0 ? 'Cancel' : 'Close'}
               </button>
               {reviewResult.ready.length > 0 && (
-                <button type="button" className="bi-btn" onClick={handleImport}>
+                <button type="button" className="bi-btn" onClick={handleImport} disabled={yearIsClosed}>
                   Import {reviewResult.ready.length} {reviewResult.ready.length === 1 ? 'item' : 'items'}
                 </button>
               )}
