@@ -58,6 +58,22 @@ function pickDefaultFiscalYear() {
   return String(open ?? thisYear);
 }
 
+// Latest PPMP (highest number) of an office for one fiscal year. PPMP numbers restart every
+// fiscal year, so FY 2026 can reach No. 4 while FY 2027 starts again at No. 1.
+function findLatestPpmp(records, office, fiscalYear) {
+  const off = String(office || '').trim().toLowerCase();
+  const year = String(fiscalYear || '').trim();
+  let best = null;
+  (records || []).forEach((r) => {
+    if (!r || String(r.end_user || '').trim().toLowerCase() !== off) return;
+    if (String(r.fiscal_year).trim() !== year) return;
+    const n = parseInt(r.ppmp_no, 10) || 0;
+    const bestN = best ? (parseInt(best.ppmp_no, 10) || 0) : -1;
+    if (!best || n > bestN || (n === bestN && Number(r.id) > Number(best.id))) best = r;
+  });
+  return best;
+}
+
 export default function RequestModal({ isOpen, onClose, recordId = null, onSaved, onBulkImport }) {
   const { user } = useAuth();
   const [step, setStep] = useState(1);
@@ -72,6 +88,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   }));
 
   const [items, setItems] = useState([]);
+  const [carriedFrom, setCarriedFrom] = useState(null); // { ppmp_no, status, count } when a new PPMP copies the previous version
   const [activeItem, setActiveItem] = useState(createBlankItem());
   const [errors, setErrors] = useState({});
   const [failedBiddingWarning, setFailedBiddingWarning] = useState('');
@@ -119,6 +136,25 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     return getNextPpmpNumber(all, user?.office, fy);
   }
 
+  // Items for a new PPMP: a copy of the latest PPMP (same office + fiscal year), or one blank item
+  // when there is none yet. Copies get new ids but keep origin_id and reference_no, so the failed-
+  // bidding check counts a carried-over item once and the entry reference number stays the same.
+  function buildNewRequestDraft(fy) {
+    const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const prev = findLatestPpmp(all, user?.office, fy);
+    if (!prev) return { items: [createBlankItem()], source: null };
+    const stamp = Date.now();
+    const copies = getRecordItems(prev).map((it, i) => ({
+      ...JSON.parse(JSON.stringify(it)),
+      id: stamp + i,
+      origin_id: it.origin_id || it.id
+    }));
+    return {
+      items: copies,
+      source: { ppmp_no: prev.ppmp_no, status: getPpmpStatus(prev), count: copies.length }
+    };
+  }
+
   useEffect(() => {
     if (!isOpen) return;
     setStep(1);
@@ -133,6 +169,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     setRecordStatus('Draft');
 
     if (recordId) {
+      setCarriedFrom(null);
       const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
       const rec = records.find(r => r.id === recordId);
       if (rec) {
@@ -155,11 +192,12 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     } else {
       setCurrentRecord(null);
       setIsViewMode(false);
-      const fresh = createBlankItem();
-      setItems([fresh]);
-      setItemIdx(0);
-      setActiveItem(fresh);
       const defaultFy = pickDefaultFiscalYear();
+      const draft = buildNewRequestDraft(defaultFy);
+      setItems(draft.items);
+      setItemIdx(0);
+      setActiveItem(draft.items[0]);
+      setCarriedFrom(draft.source);
       setHeaderData({
         ppmp_no: nextPpmpNo(defaultFy),
         fiscal_year: defaultFy,
@@ -293,6 +331,18 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     }
     setErrors(errs);
     return Object.keys(errs).length === 0;
+  };
+
+  // Move between items. While editing, keep what was typed in the item being left.
+  const goToItem = (target) => {
+    if (target < 0 || target >= items.length) return;
+    if (!isViewMode) {
+      setItems(prev => prev.map((it, i) => (i === itemIdx ? activeItem : it)));
+      setStep(1);
+      setErrors({});
+    }
+    setItemIdx(target);
+    setActiveItem(items[target]);
   };
 
   const handleNext = () => {
@@ -625,11 +675,21 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         </div>
 
         {/* Multi-Item Navigator */}
-        {items.length > 1 && isViewMode && (
+        {items.length > 1 && (
           <div className="modal-item-nav">
-            <button type="button" className="modal-item-nav-btn" disabled={itemIdx === 0} onClick={() => { setItemIdx(i => i - 1); setActiveItem(items[itemIdx - 1]); }}>&larr;</button>
+            <button type="button" className="modal-item-nav-btn" disabled={itemIdx === 0} onClick={() => goToItem(itemIdx - 1)}>&larr;</button>
             <span>Item {itemIdx + 1} of {items.length}</span>
-            <button type="button" className="modal-item-nav-btn" disabled={itemIdx === items.length - 1} onClick={() => { setItemIdx(i => i + 1); setActiveItem(items[itemIdx + 1]); }}>&rarr;</button>
+            <button type="button" className="modal-item-nav-btn" disabled={itemIdx === items.length - 1} onClick={() => goToItem(itemIdx + 1)}>&rarr;</button>
+          </div>
+        )}
+
+        {!recordId && carriedFrom && (
+          <div className="approval-info">
+            <strong>Carried over from PPMP No. {carriedFrom.ppmp_no}</strong>
+            <span>
+              {carriedFrom.count} {carriedFrom.count === 1 ? 'item' : 'items'} copied from the latest PPMP of FY {headerData.fiscal_year} ({carriedFrom.status}).
+              Review or edit them, then save as the new version.
+            </span>
           </div>
         )}
 
@@ -776,6 +836,14 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
                     const fy = e.target.value;
                     setHeaderData({ ...headerData, fiscal_year: fy, ...(recordId ? {} : { ppmp_no: nextPpmpNo(fy) }) });
                     clearError('fiscal_year');
+                    if (!recordId) {
+                      // New PPMP: its content follows the fiscal year (each year has its own No. 1, 2, ...)
+                      const draft = buildNewRequestDraft(fy);
+                      setItems(draft.items);
+                      setItemIdx(0);
+                      setActiveItem(draft.items[0]);
+                      setCarriedFrom(draft.source);
+                    }
                   }}
                 >
                   {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
