@@ -25,7 +25,10 @@ import {
   buildBudgetMismatchMessage,
   submitPpmpForApproval,
   performPpmpReviewAction,
-  isAppFinal
+  isAppFinal,
+  getNewRequestTarget,
+  newRequestBlockedMessage as blockedMessage,
+  carryOverItems
 } from '../../utils/procurementRules.js';
 import { generatePPMP_PDF } from '../../utils/pdfGenerator.js';
 import FileStore from '../../utils/fileStore.js';
@@ -58,22 +61,6 @@ function pickDefaultFiscalYear() {
   return String(open ?? thisYear);
 }
 
-// Latest PPMP (highest number) of an office for one fiscal year. PPMP numbers restart every
-// fiscal year, so FY 2026 can reach No. 4 while FY 2027 starts again at No. 1.
-function findLatestPpmp(records, office, fiscalYear) {
-  const off = String(office || '').trim().toLowerCase();
-  const year = String(fiscalYear || '').trim();
-  let best = null;
-  (records || []).forEach((r) => {
-    if (!r || String(r.end_user || '').trim().toLowerCase() !== off) return;
-    if (String(r.fiscal_year).trim() !== year) return;
-    const n = parseInt(r.ppmp_no, 10) || 0;
-    const bestN = best ? (parseInt(best.ppmp_no, 10) || 0) : -1;
-    if (!best || n > bestN || (n === bestN && Number(r.id) > Number(best.id))) best = r;
-  });
-  return best;
-}
-
 export default function RequestModal({ isOpen, onClose, recordId = null, onSaved, onBulkImport }) {
   const { user } = useAuth();
   const [step, setStep] = useState(1);
@@ -88,7 +75,6 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   }));
 
   const [items, setItems] = useState([]);
-  const [carriedFrom, setCarriedFrom] = useState(null); // { ppmp_no, status, count } when a new PPMP copies the previous version
   const [activeItem, setActiveItem] = useState(createBlankItem());
   const [errors, setErrors] = useState({});
   const [failedBiddingWarning, setFailedBiddingWarning] = useState('');
@@ -136,25 +122,6 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     return getNextPpmpNumber(all, user?.office, fy);
   }
 
-  // Items for a new PPMP: a copy of the latest PPMP (same office + fiscal year), or one blank item
-  // when there is none yet. Copies get new ids but keep origin_id and reference_no, so the failed-
-  // bidding check counts a carried-over item once and the entry reference number stays the same.
-  function buildNewRequestDraft(fy) {
-    const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
-    const prev = findLatestPpmp(all, user?.office, fy);
-    if (!prev) return { items: [createBlankItem()], source: null };
-    const stamp = Date.now();
-    const copies = getRecordItems(prev).map((it, i) => ({
-      ...JSON.parse(JSON.stringify(it)),
-      id: stamp + i,
-      origin_id: it.origin_id || it.id
-    }));
-    return {
-      items: copies,
-      source: { ppmp_no: prev.ppmp_no, status: getPpmpStatus(prev), count: copies.length }
-    };
-  }
-
   useEffect(() => {
     if (!isOpen) return;
     setStep(1);
@@ -169,7 +136,6 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     setRecordStatus('Draft');
 
     if (recordId) {
-      setCarriedFrom(null);
       const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
       const rec = records.find(r => r.id === recordId);
       if (rec) {
@@ -193,11 +159,10 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
       setCurrentRecord(null);
       setIsViewMode(false);
       const defaultFy = pickDefaultFiscalYear();
-      const draft = buildNewRequestDraft(defaultFy);
-      setItems(draft.items);
+      const fresh = createBlankItem();
+      setItems([fresh]);
       setItemIdx(0);
-      setActiveItem(draft.items[0]);
-      setCarriedFrom(draft.source);
+      setActiveItem(fresh);
       setHeaderData({
         ppmp_no: nextPpmpNo(defaultFy),
         fiscal_year: defaultFy,
@@ -267,6 +232,14 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     isAppFinal(String(headerData.fiscal_year)) &&
     (!recordId || String(headerData.fiscal_year) !== String(currentRecord?.fiscal_year));
 
+  const newTarget = !recordId
+    ? (() => {
+        let all = [];
+        try { all = JSON.parse(localStorage.getItem('procurement_records')) || []; } catch { all = []; }
+        return getNewRequestTarget(all, user?.office, headerData.fiscal_year);
+      })()
+    : null;
+
   const closedYearMessage = `The APP for FY ${headerData.fiscal_year} is already final, so a new PPMP cannot be created under it. Choose another fiscal year.`;
 
   const validateCurrentStep = () => {
@@ -274,6 +247,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     if (step === 1) {
       if (!yearOptions.includes(String(headerData.fiscal_year))) errs.fiscal_year = 'Select a fiscal year.';
       else if (fiscalYearIsClosed) errs.fiscal_year = closedYearMessage;
+      else if (newTarget?.mode === 'blocked') errs.fiscal_year = blockedMessage(newTarget.record, headerData.fiscal_year);
       if (!activeItem.project_description) errs.project_description = 'Description is required';
       if (!activeItem.object_name || !/^\d+$/.test(activeItem.object_name)) errs.object_name = 'Object Code must be numbers only';
       if (!activeItem.project_type) errs.project_type = 'Select a Project Type';
@@ -333,18 +307,6 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     return Object.keys(errs).length === 0;
   };
 
-  // Move between items. While editing, keep what was typed in the item being left.
-  const goToItem = (target) => {
-    if (target < 0 || target >= items.length) return;
-    if (!isViewMode) {
-      setItems(prev => prev.map((it, i) => (i === itemIdx ? activeItem : it)));
-      setStep(1);
-      setErrors({});
-    }
-    setItemIdx(target);
-    setActiveItem(items[target]);
-  };
-
   const handleNext = () => {
     if (validateCurrentStep()) setStep(s => s + 1);
   };
@@ -388,17 +350,34 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         records[idx].is_indicative = headerData.is_indicative;
       }
     } else {
-      const newRec = {
-        id: Date.now(),
-        ppmp_no: getNextPpmpNumber(records, user.office, headerData.fiscal_year),
-        fiscal_year: headerData.fiscal_year,
-        end_user: user.office,
-        is_indicative: headerData.is_indicative,
-        status: 'Draft',
-        items: updatedItems,
-        remarksHistory: []
-      };
-      records.push(newRec);
+      const target = getNewRequestTarget(records, user.office, headerData.fiscal_year);
+
+      if (target.mode === 'blocked') {
+        setStep(1);
+        setErrors({ fiscal_year: blockedMessage(target.record, headerData.fiscal_year) });
+        return;
+      }
+
+      if (target.mode === 'append') {
+        // Latest PPMP is still a Draft: the new item becomes another entry in it.
+        const idx = records.findIndex(r => r.id === target.record.id);
+        records[idx].items = [...getRecordItems(records[idx]), ...updatedItems];
+      } else {
+        // No PPMP yet, or the latest one is approved: create the next PPMP. An approved one is carried
+        // over in full, followed by the item(s) entered here.
+        const carried = target.mode === 'new-version' ? carryOverItems(target.record) : [];
+        const newRec = {
+          id: Date.now(),
+          ppmp_no: getNextPpmpNumber(records, user.office, headerData.fiscal_year),
+          fiscal_year: headerData.fiscal_year,
+          end_user: user.office,
+          is_indicative: headerData.is_indicative,
+          status: 'Draft',
+          items: [...carried, ...updatedItems],
+          remarksHistory: []
+        };
+        records.push(newRec);
+      }
     }
 
     if (isTwoFailed) {
@@ -675,21 +654,37 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         </div>
 
         {/* Multi-Item Navigator */}
-        {items.length > 1 && (
+        {items.length > 1 && isViewMode && (
           <div className="modal-item-nav">
-            <button type="button" className="modal-item-nav-btn" disabled={itemIdx === 0} onClick={() => goToItem(itemIdx - 1)}>&larr;</button>
+            <button type="button" className="modal-item-nav-btn" disabled={itemIdx === 0} onClick={() => { setItemIdx(i => i - 1); setActiveItem(items[itemIdx - 1]); }}>&larr;</button>
             <span>Item {itemIdx + 1} of {items.length}</span>
-            <button type="button" className="modal-item-nav-btn" disabled={itemIdx === items.length - 1} onClick={() => goToItem(itemIdx + 1)}>&rarr;</button>
+            <button type="button" className="modal-item-nav-btn" disabled={itemIdx === items.length - 1} onClick={() => { setItemIdx(i => i + 1); setActiveItem(items[itemIdx + 1]); }}>&rarr;</button>
           </div>
         )}
 
-        {!recordId && carriedFrom && (
+        {newTarget && newTarget.mode !== 'new' && (
           <div className="approval-info">
-            <strong>Carried over from PPMP No. {carriedFrom.ppmp_no}</strong>
-            <span>
-              {carriedFrom.count} {carriedFrom.count === 1 ? 'item' : 'items'} copied from the latest PPMP of FY {headerData.fiscal_year} ({carriedFrom.status}).
-              Review or edit them, then save as the new version.
-            </span>
+            {newTarget.mode === 'append' && (
+              <>
+                <strong>Adding to Draft PPMP No. {newTarget.record.ppmp_no}</strong>
+                <span>This will be saved as a new entry in the existing Draft for FY {headerData.fiscal_year} instead of creating a new PPMP.</span>
+              </>
+            )}
+            {newTarget.mode === 'new-version' && (
+              <>
+                <strong>PPMP No. {newTarget.record.ppmp_no} is approved</strong>
+                <span>
+                  Saving creates PPMP No. {headerData.ppmp_no} and carries over the {getRecordItems(newTarget.record).length}{' '}
+                  {getRecordItems(newTarget.record).length === 1 ? 'item' : 'items'} from No. {newTarget.record.ppmp_no}, plus this new entry.
+                </span>
+              </>
+            )}
+            {newTarget.mode === 'blocked' && (
+              <>
+                <strong>PPMP No. {newTarget.record.ppmp_no} is under review</strong>
+                <span>Nothing new can be added until it is approved or returned.</span>
+              </>
+            )}
           </div>
         )}
 
@@ -787,7 +782,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
             <div className="form-col">
               <div className="field-group">
                 <label>PPMP Number</label>
-                <input type="text" value={headerData.ppmp_no} readOnly />
+                <input type="text" value={newTarget?.mode === 'append' ? newTarget.record.ppmp_no : headerData.ppmp_no} readOnly />
               </div>
 
               <div className={`field-group ${errors.project_description ? 'error-state' : ''}`}>
@@ -816,7 +811,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
 
               <div className="field-group">
                 <label>Is Indicative or Final?</label>
-                <select value={headerData.is_indicative} disabled={isViewMode} onChange={e => setHeaderData({ ...headerData, is_indicative: e.target.value })}>
+                <select value={newTarget?.mode === 'append' ? newTarget.record.is_indicative : headerData.is_indicative} disabled={isViewMode || newTarget?.mode === 'append'} onChange={e => setHeaderData({ ...headerData, is_indicative: e.target.value })}>
                   <option value="Indicative">Indicative</option>
                   <option value="Final">Final</option>
                 </select>
@@ -836,14 +831,6 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
                     const fy = e.target.value;
                     setHeaderData({ ...headerData, fiscal_year: fy, ...(recordId ? {} : { ppmp_no: nextPpmpNo(fy) }) });
                     clearError('fiscal_year');
-                    if (!recordId) {
-                      // New PPMP: its content follows the fiscal year (each year has its own No. 1, 2, ...)
-                      const draft = buildNewRequestDraft(fy);
-                      setItems(draft.items);
-                      setItemIdx(0);
-                      setActiveItem(draft.items[0]);
-                      setCarriedFrom(draft.source);
-                    }
                   }}
                 >
                   {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}

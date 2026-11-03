@@ -9,7 +9,12 @@ import {
   MAX_IMPORT_ROWS
 } from '../../utils/bulkImport.js';
 import { getNextPpmpNumber } from '../../utils/ppmpNumber.js';
-import { isAppFinal } from '../../utils/procurementRules.js';
+import {
+  isAppFinal,
+  getRecordItems,
+  getNewRequestTarget,
+  newRequestBlockedMessage
+} from '../../utils/procurementRules.js';
 
 function readRecords() {
   try {
@@ -68,13 +73,25 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
+  // What this import will do (same rules as the request form), based on the latest PPMP of this
+  // office + fiscal year: add to a Draft, create the next PPMP from an approved one, or be blocked.
+  const plan = useMemo(
+    () => (isAddingToExisting || !isOpen
+      ? null
+      : getNewRequestTarget(readRecords(), currentOffice, fiscalYear)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isOpen, isAddingToExisting, currentOffice, fiscalYear]
+  );
+
   // The real number the import will use (matches what commitImportedItems issues).
   const ppmpNo = useMemo(
-    () => (isAddingToExisting
-      ? (headerData?.ppmp_no || '-')
-      : getNextPpmpNumber(readRecords(), currentOffice, fiscalYear)),
+    () => {
+      if (isAddingToExisting) return headerData?.ppmp_no || '-';
+      if (plan?.mode === 'append') return plan.record.ppmp_no;
+      return getNextPpmpNumber(readRecords(), currentOffice, fiscalYear);
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isOpen, isAddingToExisting, headerData?.ppmp_no, currentOffice, fiscalYear]
+    [isOpen, isAddingToExisting, headerData?.ppmp_no, currentOffice, fiscalYear, plan]
   );
 
   // Fiscal years a new PPMP can be planned for: this year and next year only.
@@ -84,8 +101,12 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
   );
 
   const yearIsClosed = !isAddingToExisting && isOpen && isAppFinal(fiscalYear);
+  const planBlocked = plan?.mode === 'blocked';
 
   if (!isOpen) return null;
+
+  // Adding to a Draft keeps that Draft's type, so the type picker follows it.
+  const effectiveType = plan?.mode === 'append' ? plan.record.is_indicative : ppmpType;
 
   const currentYear = isAddingToExisting ? String(headerData?.fiscal_year || fiscalYear) : fiscalYear;
 
@@ -96,7 +117,7 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
         ppmp_no: ppmpNo,
         fiscal_year: currentYear,
         end_user: currentOffice,
-        is_indicative: ppmpType
+        is_indicative: effectiveType
       });
     } catch (err) {
       setErrorToast('Could not download template: ' + (err.message || 'Unknown error'));
@@ -165,7 +186,7 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
           ppmp_no: ppmpNo,
           fiscal_year: currentYear,
           end_user: currentOffice,
-          is_indicative: ppmpType
+          is_indicative: effectiveType
         },
         user,
         targetRecordId: recordId
@@ -187,9 +208,20 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
     onClose();
   };
 
-  const targetDescription = isAddingToExisting
-    ? `Items will be added to existing PPMP No. ${ppmpNo}.`
-    : `Items will create a new Draft PPMP: No. ${ppmpNo}, FY ${currentYear}, ${currentOffice}.`;
+  const carriedCount = plan?.mode === 'new-version' ? getRecordItems(plan.record).length : 0;
+  let targetDescription;
+  if (isAddingToExisting) {
+    targetDescription = `Items will be added to existing PPMP No. ${ppmpNo}.`;
+  } else if (plan?.mode === 'append') {
+    targetDescription = `Items will be added to the existing Draft PPMP No. ${ppmpNo}, FY ${currentYear}, ${currentOffice}.`;
+  } else if (plan?.mode === 'new-version') {
+    targetDescription = `Items will create a new Draft PPMP: No. ${ppmpNo}, FY ${currentYear}, ${currentOffice}, ` +
+      `carrying over the ${carriedCount} ${carriedCount === 1 ? 'item' : 'items'} of approved PPMP No. ${plan.record.ppmp_no}.`;
+  } else if (planBlocked) {
+    targetDescription = `PPMP No. ${plan.record.ppmp_no} for FY ${currentYear} is under review, so nothing can be imported yet.`;
+  } else {
+    targetDescription = `Items will create a new Draft PPMP: No. ${ppmpNo}, FY ${currentYear}, ${currentOffice}.`;
+  }
 
   return (
     <div className="bi-overlay" onClick={(e) => e.target.classList.contains('bi-overlay') && handleClose()}>
@@ -244,11 +276,16 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
                       </label>
                       <label className="bi-type-field">
                         <span>PPMP type for these items</span>
-                        <select value={ppmpType} onChange={(e) => setPpmpType(e.target.value)}>
+                        <select value={effectiveType} disabled={plan?.mode === 'append'} onChange={(e) => setPpmpType(e.target.value)}>
                           <option value="Indicative">Indicative</option>
                           <option value="Final">Final</option>
                         </select>
                       </label>
+                      {!yearIsClosed && planBlocked && (
+                        <p className="bi-fatal" style={{ marginTop: 8 }}>
+                          {newRequestBlockedMessage(plan.record, fiscalYear)}
+                        </p>
+                      )}
                       {yearIsClosed && (
                         <p className="bi-fatal" style={{ marginTop: 8 }}>
                           The APP for FY {fiscalYear} is already final, so a new PPMP cannot be created under it.
@@ -398,7 +435,7 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
                 {reviewResult.ready.length > 0 ? 'Cancel' : 'Close'}
               </button>
               {reviewResult.ready.length > 0 && (
-                <button type="button" className="bi-btn" onClick={handleImport} disabled={yearIsClosed}>
+                <button type="button" className="bi-btn" onClick={handleImport} disabled={yearIsClosed || planBlocked}>
                   Import {reviewResult.ready.length} {reviewResult.ready.length === 1 ? 'item' : 'items'}
                 </button>
               )}

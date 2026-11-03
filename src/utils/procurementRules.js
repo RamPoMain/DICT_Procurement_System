@@ -430,6 +430,54 @@ export function getLatestApprovedPpmpPerOffice(records, fiscalYear) {
   return Array.from(latestByOffice.values());
 }
 
+// ---- New request / bulk import: which PPMP does a new entry go to? ----
+
+// Latest PPMP (highest number) of an office for one fiscal year. PPMP numbers restart every
+// fiscal year, so FY 2026 can reach No. 4 while FY 2027 starts again at No. 1.
+export function findLatestPpmp(records, office, fiscalYear) {
+  const off = String(office || '').trim().toLowerCase();
+  const year = String(fiscalYear || '').trim();
+  let best = null;
+  (records || []).forEach((r) => {
+    if (!r || String(r.end_user || '').trim().toLowerCase() !== off) return;
+    if (String(r.fiscal_year).trim() !== year) return;
+    const n = parseInt(r.ppmp_no, 10) || 0;
+    const bestN = best ? (parseInt(best.ppmp_no, 10) || 0) : -1;
+    if (!best || n > bestN || (n === bestN && Number(r.id) > Number(best.id))) best = r;
+  });
+  return best;
+}
+
+// What "New Request" / bulk import does for an office + fiscal year, based on its latest PPMP:
+//   no PPMP yet            -> 'new'          create PPMP No. 1
+//   latest is a Draft      -> 'append'       add the entries to that Draft (no new PPMP)
+//   latest is approved     -> 'new-version'  create the next PPMP and carry over the approved one
+//   latest is under review -> 'blocked'      nothing can be added until it is approved or returned
+export function getNewRequestTarget(records, office, fiscalYear) {
+  const latest = findLatestPpmp(records, office, fiscalYear);
+  if (!latest) return { mode: 'new', record: null };
+  const status = getPpmpStatus(latest);
+  if (status === 'Draft') return { mode: 'append', record: latest };
+  if (status === 'Completed') return { mode: 'new-version', record: latest };
+  return { mode: 'blocked', record: latest };
+}
+
+export function newRequestBlockedMessage(record, fiscalYear) {
+  return `PPMP No. ${record.ppmp_no} for FY ${fiscalYear} is still under review, so nothing new can be added until it is approved or returned.`;
+}
+
+// Items a new PPMP inherits from the previous version (No. 1 -> No. 2). Copies get new ids but keep
+// reference_no (so budgets count them once) and origin_id (so the failed-bidding check counts them once).
+export function carryOverItems(previous, idStart = Date.now() + 1) {
+  if (!previous) return [];
+  return getRecordItems(previous).map((it, i) => ({
+    ...JSON.parse(JSON.stringify(it)),
+    id: idStart + i,
+    origin_id: it.origin_id || it.id,
+    carried_over_from: it.carried_over_from || previous.ppmp_no
+  }));
+}
+
 export function canSessionActOnRecord(record, session) {
   if (!session || !session.canApprove || !record) return false;
   if (getPpmpStatus(record) !== 'For Approval') return false;

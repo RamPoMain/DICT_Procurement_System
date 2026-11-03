@@ -11,7 +11,10 @@ import {
   tagFailedAttempts,
   getRecordItems,
   getPpmpStatus,
-  isAppFinal
+  isAppFinal,
+  getNewRequestTarget,
+  newRequestBlockedMessage,
+  carryOverItems
 } from './procurementRules.js';
 import { getNextPpmpNumber } from './ppmpNumber.js';
 import {
@@ -729,6 +732,9 @@ export function commitImportedItems({ items, headerData = {}, user, targetRecord
   let ppmpNo;
   let fiscalYear;
   let endUser;
+  let mode = 'existing';   // 'existing' | 'new' | 'append' | 'new-version'
+  let carried = 0;         // items carried over from the previous approved PPMP
+  let carriedFrom = null;  // that PPMP's number
 
   if (targetRecordId != null) {
     const idx = finalRecords.findIndex(r => r.id === targetRecordId);
@@ -750,22 +756,47 @@ export function commitImportedItems({ items, headerData = {}, user, targetRecord
     if (isAppFinal(fiscalYear)) {
       throw new Error(`The APP for FY ${fiscalYear} is already final, so a new PPMP cannot be created under it.`);
     }
-    ppmpNo = getNextPpmpNumber(finalRecords, endUser, fiscalYear);
-    baseItems = [];
-    target = {
-      id: stamp,
-      creatorId: user?.id || null,
-      ppmp_no: ppmpNo,
-      is_indicative: headerData.is_indicative || 'Indicative',
-      end_user: endUser,
-      fiscal_year: fiscalYear,
-      items: stamped,
-      status: 'Draft',
-      currentApproverRole: null,
-      remarksHistory: [],
-      date: new Date().toLocaleDateString()
-    };
-    finalRecords.push(target);
+
+    // Same rules as the request form, based on the latest PPMP of this office + fiscal year.
+    const plan = getNewRequestTarget(finalRecords, endUser, fiscalYear);
+    mode = plan.mode;
+
+    if (plan.mode === 'blocked') {
+      throw new Error(newRequestBlockedMessage(plan.record, fiscalYear));
+    }
+
+    if (plan.mode === 'append') {
+      // Latest PPMP is still a Draft: the rows become more entries in it.
+      const idx = finalRecords.findIndex(r => r.id === plan.record.id);
+      const existing = finalRecords[idx];
+      ppmpNo = existing.ppmp_no;
+      baseItems = Array.isArray(existing.items) ? existing.items : getRecordItems(existing);
+      finalRecords[idx] = { ...existing, items: [...baseItems, ...stamped] };
+      target = finalRecords[idx];
+    } else {
+      // No PPMP yet, or the latest one is approved: create the next PPMP. An approved one is
+      // carried over in full, followed by the imported rows.
+      ppmpNo = getNextPpmpNumber(finalRecords, endUser, fiscalYear);
+      baseItems = plan.mode === 'new-version' ? carryOverItems(plan.record, stamp + stamped.length) : [];
+      if (plan.mode === 'new-version') {
+        carried = baseItems.length;
+        carriedFrom = plan.record.ppmp_no;
+      }
+      target = {
+        id: stamp,
+        creatorId: user?.id || null,
+        ppmp_no: ppmpNo,
+        is_indicative: headerData.is_indicative || 'Indicative',
+        end_user: endUser,
+        fiscal_year: fiscalYear,
+        items: [...baseItems, ...stamped],
+        status: 'Draft',
+        currentApproverRole: null,
+        remarksHistory: [],
+        date: new Date().toLocaleDateString()
+      };
+      finalRecords.push(target);
+    }
   }
 
   // Reference numbers, same rules as the form:
@@ -813,6 +844,9 @@ export function commitImportedItems({ items, headerData = {}, user, targetRecord
     ppmp_no: ppmpNo,
     fiscal_year: fiscalYear,
     count: stamped.length,
-    converted: failedBiddingDescriptions.length
+    converted: failedBiddingDescriptions.length,
+    mode,
+    carried,
+    carried_from: carriedFrom
   };
 }

@@ -418,7 +418,12 @@ export default function Dashboard() {
         headerData={bulkHeader}
         onSuccess={(res) => {
           loadData();
-          showToast(`${res.count} ${res.count === 1 ? 'item' : 'items'} imported under PPMP No. ${res.ppmp_no}.` +
+          const itemWord = res.count === 1 ? 'item' : 'items';
+          const where =
+            res.mode === 'append' ? `added to Draft PPMP No. ${res.ppmp_no}`
+            : res.mode === 'new-version' ? `imported into new PPMP No. ${res.ppmp_no} (${res.carried} carried over from No. ${res.carried_from})`
+            : `imported under PPMP No. ${res.ppmp_no}`;
+          showToast(`${res.count} ${itemWord} ${where}.` +
             (res.converted ? ` ${res.converted} switched to Two Failed Biddings.` : '') +
             ' Attach the supporting documents before submitting.');
         }}
