@@ -29,9 +29,7 @@ import {
   getNewRequestTarget,
   newRequestBlockedMessage as blockedMessage,
   carryOverItems,
-  updatePriorFailedBiddingRemarks,
-  calculateDeduplicatedBudget,
-  formatPesoExact
+  updatePriorFailedBiddingRemarks
 } from '../../utils/procurementRules.js';
 import { generatePPMP_PDF } from '../../utils/pdfGenerator.js';
 import { exportPPMP_Excel } from '../../utils/entriesExport.js';
@@ -746,17 +744,8 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
 
         {/* Multi-Item Navigator & Item Actions */}
         {(items.length > 1 || !isViewMode) && (
-          <div className="modal-item-nav-container" style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            background: 'var(--db-card-bg, #1a2234)',
-            border: '1px solid var(--db-border, rgba(255, 255, 255, 0.08))',
-            borderRadius: 8,
-            padding: '8px 14px',
-            marginBottom: 16
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div className="modal-item-nav-container">
+            <div className="modal-item-nav-controls">
               <button
                 type="button"
                 className="modal-item-nav-btn"
@@ -766,7 +755,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
               >
                 &larr;
               </button>
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--db-text, #E7EAF3)' }}>
+              <span className="modal-item-nav-counter">
                 Item {itemIdx + 1} of {items.length}
               </span>
               <button
@@ -779,64 +768,35 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
                 &rarr;
               </button>
               {activeItem?.origin_id && (
-                <span style={{
-                  fontSize: 11,
-                  padding: '2px 8px',
-                  borderRadius: 4,
-                  background: 'rgba(59, 130, 246, 0.15)',
-                  color: 'var(--db-accent, #3b82f6)',
-                  fontWeight: 600
-                }}>
+                <span className="modal-item-badge-carried">
                   Carried Over
                 </span>
               )}
               {activeItem?.reference_no && (
-                <span style={{ fontSize: 11, color: 'var(--db-text-dim, #8B94A8)', fontFamily: 'monospace' }}>
+                <span className="modal-item-badge-ref">
                   Ref: {activeItem.reference_no}
                 </span>
               )}
-              <span style={{ fontSize: 12, color: 'var(--db-text-dim, #8B94A8)', marginLeft: 6 }}>
-                PPMP Total: <strong style={{ color: 'var(--db-text, #E7EAF3)' }}>{formatPesoExact(calculateDeduplicatedBudget(items))}</strong>
-              </span>
             </div>
 
             {!isViewMode && (
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div className="modal-item-nav-actions">
                 <button
                   type="button"
                   onClick={handleAddNewItem}
-                  style={{
-                    background: 'rgba(59, 130, 246, 0.15)',
-                    border: '1px solid rgba(59, 130, 246, 0.3)',
-                    color: 'var(--db-accent, #3b82f6)',
-                    borderRadius: 6,
-                    padding: '5px 10px',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 4
-                  }}
+                  className="modal-item-nav-add-btn"
                 >
-                  + Add Item
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  Add Item
                 </button>
                 {items.length > 1 && (
                   <button
                     type="button"
                     onClick={handleDeleteItemInForm}
-                    style={{
-                      background: 'rgba(239, 68, 68, 0.12)',
-                      border: '1px solid rgba(239, 68, 68, 0.25)',
-                      color: '#ef4444',
-                      borderRadius: 6,
-                      padding: '5px 10px',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: 'pointer'
-                    }}
+                    className="modal-item-nav-delete-btn"
                     title="Remove this item from request"
                   >
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
                     Delete Item
                   </button>
                 )}
@@ -954,38 +914,14 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         </div>
 
         {failedBiddingWarning && (
-          <div style={{
-            padding: '10px 14px',
-            background: 'rgba(239, 68, 68, 0.12)',
-            border: '1px solid rgba(239, 68, 68, 0.3)',
-            color: '#ef4444',
-            borderRadius: 8,
-            marginBottom: 14,
-            fontSize: 12.5,
-            fontWeight: 500,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8
-          }}>
+          <div className="failed-bidding-warning-box">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             <span>{failedBiddingWarning}</span>
           </div>
         )}
 
         {failedBiddingInfo && !failedBiddingWarning && (
-          <div style={{
-            padding: '10px 14px',
-            background: 'rgba(59, 130, 246, 0.1)',
-            border: '1px solid rgba(59, 130, 246, 0.25)',
-            color: 'var(--db-accent, #3b82f6)',
-            borderRadius: 8,
-            marginBottom: 14,
-            fontSize: 12.5,
-            fontWeight: 500,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8
-          }}>
+          <div className="failed-bidding-info-box">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
             <span>{failedBiddingInfo}</span>
           </div>
