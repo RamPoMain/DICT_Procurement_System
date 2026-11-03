@@ -26,7 +26,7 @@ import {
   isAppPendingForUser
 } from '../utils/dashboardHelpers';
 import { generateAPP_PDF } from '../utils/pdfGenerator';
-import { exportAppTemplateExcel, EXPORT_ROLES } from '../utils/appTemplateExport';
+import { exportStandardAppExcel, exportPhilGepsAppExcel, exportAppTemplateExcel, EXPORT_ROLES } from '../utils/appTemplateExport';
 
 const iconStyle = { viewBox: '0 0 24 24', width: 14, height: 14, fill: 'none', stroke: 'currentColor', strokeWidth: 2 };
 
@@ -310,15 +310,26 @@ export default function Dashboard() {
                         </button>
                       )}
                       {canExportExcel && (
-                        <button
-                          type="button"
-                          className="db-action-btn"
-                          title="Export APP template (Excel)"
-                          style={secondaryBtnStyle}
-                          onClick={() => exportAppTemplateExcel(String(app.fiscal_year), { session: user, notify: showToast })}
-                        >
-                          Export Excel
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            className="db-action-btn"
+                            title="Export Standard 12-Column APP (Excel)"
+                            style={{ ...secondaryBtnStyle, background: '#15803d', color: '#fff', borderColor: '#15803d' }}
+                            onClick={() => exportStandardAppExcel(String(app.fiscal_year), { session: user, notify: showToast })}
+                          >
+                            Export APP (.xlsx)
+                          </button>
+                          <button
+                            type="button"
+                            className="db-action-btn"
+                            title="Export PhilGEPS APP template (Excel)"
+                            style={{ ...secondaryBtnStyle, background: '#0284c7', color: '#fff', borderColor: '#0284c7' }}
+                            onClick={() => exportPhilGepsAppExcel(String(app.fiscal_year), { session: user, notify: showToast })}
+                          >
+                            Export PhilGEPS (.xlsx)
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
