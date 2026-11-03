@@ -3,6 +3,7 @@ import Sidebar from '../components/layout/Sidebar.jsx';
 import RequestModal from '../components/modals/RequestModal.jsx';
 import BulkImportModal from '../components/modals/BulkImportModal.jsx';
 import AppPreviewModal from '../components/modals/AppPreviewModal.jsx';
+import ExcelPreviewModal from '../components/modals/ExcelPreviewModal.jsx';
 import PpmpExpanded from '../components/entries/PpmpExpanded.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useTheme } from '../context/ThemeContext.jsx';
@@ -137,6 +138,7 @@ export default function Entries() {
   const [toast, setToast] = useState('');
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkHeader, setBulkHeader] = useState(null);
+  const [previewRecord, setPreviewRecord] = useState(null);
   // True while the open PPMP has unsaved inline edits (reported by PpmpExpanded).
   const dirtyRef = useRef(false);
   const handleDirtyChange = useCallback((isDirty) => { dirtyRef.current = isDirty; }, []);
@@ -418,6 +420,7 @@ export default function Entries() {
                                   record={r}
                                   user={user}
                                   onView={() => openRecord(r.id)}
+                                  onPreview={() => setPreviewRecord(r)}
                                   onDelete={() => requestDelete(r)}
                                   onSubmit={() => requestSubmit(r)}
                                   onPdf={() => generatePPMP_PDF(r)}
@@ -506,6 +509,12 @@ export default function Entries() {
       {appModalYear && (
         <AppPreviewModal isOpen={!!appModalYear} onClose={() => setAppModalYear(null)} fiscalYear={appModalYear} onUpdated={loadData} />
       )}
+      <ExcelPreviewModal
+        record={previewRecord}
+        onClose={() => setPreviewRecord(null)}
+        onOpenRequest={(id) => { setPreviewRecord(null); openRecord(id); }}
+        notify={setToast}
+      />
       <ConfirmDialog dialog={dialog} onCancel={() => setDialog(null)} onConfirm={confirmDialog} />
       <div className={`db-toast${toast ? ' show' : ''}`} role="status">{toast}</div>
     </div>

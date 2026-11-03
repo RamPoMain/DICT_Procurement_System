@@ -192,7 +192,7 @@ const PlusIcon = ({ size = 13 }) => (
 
 function Toolbar({
   record, user, editing, dirty, canEdit, confirmingDiscard,
-  onView, onDelete, onSubmit, onPdf, onXlsx,
+  onView, onPreview, onDelete, onSubmit, onPdf, onXlsx,
   onEdit, onAddItem, onBulkImport, onCancel, onKeepEditing, onDiscard, onSave
 }) {
   const draft = isPpmpDraft(record);
@@ -263,6 +263,11 @@ function Toolbar({
               <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
             </svg>
           </button>
+          {onPreview && (
+            <button type="button" className="db-action-btn" title="Preview this PPMP (Excel view)" onClick={onPreview}>
+              Preview
+            </button>
+          )}
           <button type="button" className="db-action-btn" title="Export PDF" onClick={onPdf}>PDF</button>
           <button type="button" className="db-action-btn" title="Export Excel" onClick={onXlsx}>XLSX</button>
           {canDeleteRecord(record, user) && (
@@ -520,7 +525,7 @@ function EditableRow({ item, messages, toast, onField, onBlurField, onToggleStra
 /* Main component                                                      */
 /* ------------------------------------------------------------------ */
 export default function PpmpExpanded({
-  record, user, onView, onDelete, onSubmit, onPdf, onXlsx,
+  record, user, onView, onPreview, onDelete, onSubmit, onPdf, onXlsx,
   onSaved, onToast, onDirtyChange
 }) {
   // Parent renders this with key={record.id}, so state resets when another PPMP opens.
@@ -765,13 +770,17 @@ export default function PpmpExpanded({
   const subtotal = visible.reduce((s, it) => s + parseBudgetNumber(it.budget), 0);
   const total = formatPesoExact(calculateDeduplicatedBudget(items));
   const extraCols = editing ? 1 : 0;
+  // Criteria and Strategies are Draft-only columns and disappear once the PPMP is submitted, so every
+  // spanning cell in the footer rows has to shrink with them. A fixed span leaves the Total Budget
+  // amount sitting in the wrong (or an off-screen) column.
+  const fullSpan = (showCS ? 18 : 16) + extraCols;
 
   return (
     <div className="db-entry-expand-inner">
       <Toolbar
         record={record} user={user}
         editing={editing} dirty={dirty} canEdit={canEdit} confirmingDiscard={confirmingDiscard}
-        onView={onView} onDelete={onDelete} onSubmit={onSubmit} onPdf={onPdf} onXlsx={onXlsx}
+        onView={onView} onPreview={onPreview} onDelete={onDelete} onSubmit={onSubmit} onPdf={onPdf} onXlsx={onXlsx}
         onEdit={startEdit} onAddItem={addItem} onBulkImport={() => setBulkOpen(true)} onCancel={requestCancel}
         onKeepEditing={() => setConfirmingDiscard(false)} onDiscard={discard} onSave={save}
       />
@@ -901,29 +910,26 @@ export default function PpmpExpanded({
 
               {active && visible.length === 0 && (
                 <tr className="ep-filter-empty">
-                  <td colSpan="18">No items match the current filters.</td>
+                  <td colSpan={fullSpan}>No items match the current filters.</td>
                 </tr>
               )}
-              {active && visible.length > 0 && (
-                <tr className="ep-filter-subtotal">
-                  <td colSpan="13" style={{ textAlign: 'right', fontWeight: 700 }}>
-                    <span className="ep-filter-subtotal-label">
-                      FILTERED TOTAL ({visible.length} of {items.length} items):
-                    </span>
-                  </td>
-                  <td style={{ fontWeight: 700 }}>
-                    <span className="ep-filter-subtotal-value">{formatPesoExact(subtotal)}</span>
-                  </td>
-                  <td colSpan="4" />
-                </tr>
-              )}
-              <tr>
-                <td colSpan="13" style={{ textAlign: 'right', fontWeight: 700 }}>TOTAL BUDGET:</td>
-                <td style={{ fontWeight: 700 }}>{total}</td>
-                <td colSpan={4 + extraCols} />
-              </tr>
             </tbody>
           </table>
+        </div>
+
+        {/* Totals sit outside the <table>: the first two table columns are sticky, and a footer row built from
+            those columns made the amount slide underneath the TOTAL BUDGET label. */}
+        <div
+          className="ep-total-bar"
+          style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'baseline', gap: '6px 28px', padding: '12px 14px 4px', fontWeight: 700 }}
+        >
+          {active && visible.length > 0 && (
+            <span className="ep-filter-subtotal-label">
+              FILTERED TOTAL ({visible.length} of {items.length} items):{' '}
+              <span className="ep-filter-subtotal-value">{formatPesoExact(subtotal)}</span>
+            </span>
+          )}
+          <span>TOTAL BUDGET: <span>{total}</span></span>
         </div>
       </div>
 

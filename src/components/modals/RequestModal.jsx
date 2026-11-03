@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../../context/AuthContext.jsx';
 import {
   parseBudgetNumber,
@@ -29,7 +30,8 @@ import {
   getNewRequestTarget,
   newRequestBlockedMessage as blockedMessage,
   carryOverItems,
-  updatePriorFailedBiddingRemarks
+  updatePriorFailedBiddingRemarks,
+  normalizeDescription
 } from '../../utils/procurementRules.js';
 import { generatePPMP_PDF } from '../../utils/pdfGenerator.js';
 import { exportPPMP_Excel } from '../../utils/entriesExport.js';
@@ -42,6 +44,7 @@ import {
   EXPENSE_CLASS_OPTIONS
 } from '../../utils/procurementOptions.js';
 import FilePreviewModal from './FilePreviewModal.jsx';
+import { PpmpSheet, PreviewBoundary } from './ExcelPreviewModal.jsx';
 
 // BID_CRITERIA_OPTIONS, STRATEGY_OPTIONS, GENERAL_REQ_OPTIONS and EXPENSE_CLASS_OPTIONS now live in
 // utils/procurementOptions.js so the form and the Excel import always agree.
@@ -54,6 +57,10 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;   // 10MB per file
 const MAX_TOTAL_SIZE = 50 * 1024 * 1024;  // 50MB total per item
 const formatFileSize = (b) => b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
 const STEP_PROGRESS = [15, 45, 85];
+
+// Same matching rule the reference-number lookup uses (case-insensitive, ignores a "[1st Failure]" prefix),
+// plus collapsed spaces, so "Laptops" and "laptops " are the same entry.
+const normDesc = (s) => normalizeDescription(String(s || '').replace(/\s+/g, ' '));
 
 // A new PPMP can only be planned for this year or next year. Default to the first one
 // whose APP is not yet final (falls back to this year, where the closed-year message shows).
@@ -93,6 +100,9 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   const [previewDoc, setPreviewDoc] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
+  const [descFocused, setDescFocused] = useState(false);
+  // Last object code that was filled in automatically (so we never overwrite one the user typed).
+  const autoCodeRef = useRef(null);
 
   function createBlankItem() {
     return {
@@ -421,6 +431,23 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
 
     updatedItems[itemIdx] = finalItem;
 
+    // Same description = same procurement. Link every such item under ONE reference number so
+    // totals (which de-duplicate by reference_no) count its budget once, not once per entry.
+    updatedItems.forEach((it, i) => {
+      if (i === itemIdx || it.reference_no) return;
+      const info = findExistingReferenceInfo(it.project_description, it.project_type, currentRec, user?.office);
+      if (info?.reference_no) updatedItems[i] = { ...it, reference_no: info.reference_no };
+    });
+    const entryKey = (it) => normDesc(it.project_description);
+    const refByEntry = new Map();
+    updatedItems.forEach((it) => {
+      if (it.reference_no && normDesc(it.project_description)) refByEntry.set(entryKey(it), it.reference_no);
+    });
+    updatedItems.forEach((it, i) => {
+      const ref = !it.reference_no && refByEntry.get(entryKey(it));
+      if (ref) updatedItems[i] = { ...it, reference_no: ref };
+    });
+
     if (recordId) {
       const idx = records.findIndex(r => r.id === recordId);
       if (idx !== -1 && getPpmpStatus(records[idx]) !== 'Draft') {
@@ -476,6 +503,61 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     localStorage.setItem('procurement_records', JSON.stringify(records));
     if (onSaved) onSaved();
     onClose();
+  };
+
+  // Every entry this office has already made (saved PPMPs + the other items in this form),
+  // keyed by description. Used to reuse the object code and to fill the suggestion dropdown.
+  const getKnownEntries = () => {
+    let all = [];
+    try { all = JSON.parse(localStorage.getItem('procurement_records')) || []; } catch { all = []; }
+    const map = new Map();
+    const add = (it) => {
+      const key = normDesc(it?.project_description);
+      if (!key || it.id === activeItem.id) return;
+      const prev = map.get(key);
+      map.set(key, {
+        description: String(it.project_description).trim(),
+        object_name: prev?.object_name || it.object_name || '',
+        project_type: it.project_type || prev?.project_type || ''
+      });
+    };
+    all
+      .filter(r => !user?.office || r.end_user === user.office)
+      .forEach(r => getRecordItems(r).forEach(add));
+    items.forEach((it, i) => { if (i !== itemIdx) add(it); });
+    return map;
+  };
+
+  // Typing a description that matches an earlier entry copies its object code by default.
+  // The code stays editable, and one the user typed themselves is never overwritten.
+  const applyDescription = (value) => {
+    const next = { ...activeItem, project_description: value };
+    const match = getKnownEntries().get(normDesc(value));
+    const mayAuto = !activeItem.object_name || activeItem.object_name === autoCodeRef.current;
+    if (mayAuto) {
+      if (match?.object_name) {
+        next.object_name = match.object_name;
+        autoCodeRef.current = match.object_name;
+        clearError('object_name');
+      } else if (activeItem.object_name) {
+        next.object_name = '';
+        autoCodeRef.current = null;
+      }
+    }
+    setActiveItem(next);
+  };
+
+  const pickSuggestion = (entry) => {
+    const next = { ...activeItem, project_description: entry.description };
+    if (entry.object_name) {
+      next.object_name = entry.object_name;
+      autoCodeRef.current = entry.object_name;
+      clearError('object_name');
+    }
+    if (!activeItem.project_type && entry.project_type) next.project_type = entry.project_type;
+    setActiveItem(next);
+    clearError('project_description');
+    setDescFocused(false);
   };
 
   const clearError = (key) => setErrors(e => { const { [key]: _removed, ...rest } = e; return rest; });
@@ -657,6 +739,13 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
 
   const docLabel = PROJECT_TYPE_DOC_LABELS[activeItem.project_type];
   const docs = activeItem.supporting_documents || [];
+
+  const typedDesc = normDesc(activeItem.project_description);
+  const descSuggestions = (descFocused && !isViewMode)
+    ? [...getKnownEntries().values()]
+        .filter(e => normDesc(e.description) !== typedDesc && normDesc(e.description).includes(typedDesc))
+        .slice(0, 6)
+    : [];
 
   return (
     <div className="db-modal-overlay" id="requestModalOverlay">
@@ -938,12 +1027,47 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
 
               <div className={`field-group ${errors.project_description ? 'error-state' : ''}`}>
                 <label>General Description and Objective</label>
-                <textarea
-                  placeholder="Enter the objective of the project..."
-                  value={activeItem.project_description}
-                  disabled={isViewMode}
-                  onChange={e => setActiveItem({ ...activeItem, project_description: e.target.value })}
-                />
+                <div style={{ position: 'relative' }}>
+                  <textarea
+                    placeholder="Enter the objective of the project..."
+                    value={activeItem.project_description}
+                    disabled={isViewMode}
+                    onChange={e => applyDescription(e.target.value)}
+                    onFocus={() => setDescFocused(true)}
+                    onBlur={() => setDescFocused(false)}
+                  />
+                  {descSuggestions.length > 0 && (
+                    <ul
+                      className="desc-suggest-list"
+                      onMouseDown={e => e.preventDefault()}
+                      style={{
+                        position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30,
+                        margin: '4px 0 0', padding: 4, listStyle: 'none', maxHeight: 240, overflowY: 'auto',
+                        background: 'var(--db-card, var(--db-surface, #1b2130))',
+                        border: '1px solid var(--db-border, rgba(128,128,128,0.35))',
+                        borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.25)'
+                      }}
+                    >
+                      {descSuggestions.map(e => (
+                        <li key={normDesc(e.description)}>
+                          <button
+                            type="button"
+                            onClick={() => pickSuggestion(e)}
+                            style={{
+                              display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px',
+                              background: 'none', border: 'none', borderRadius: 6, cursor: 'pointer',
+                              font: 'inherit', color: 'var(--db-text, inherit)'
+                            }}
+                          >
+                            <span style={{ display: 'block', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {e.description}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
                 {errors.project_description && <p className="text-45">{errors.project_description}</p>}
               </div>
 
@@ -1286,26 +1410,6 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
               </>
             )}
 
-            {canAct && (
-              <button
-                type="button"
-                className="next-btn"
-                style={{
-                  background: 'var(--db-accent, #3b82f6)',
-                  color: '#fff',
-                  border: 'none',
-                  fontWeight: 600
-                }}
-                onClick={() => {
-                  setReviewRemarks('');
-                  setReviewRemarksError(false);
-                  setReviewDialogOpen(true);
-                }}
-              >
-                Review & Decide &rarr;
-              </button>
-            )}
-
             {step < 3 ? (
               <button type="button" className="next-btn" onClick={handleNext}>Next &rarr;</button>
             ) : (
@@ -1316,6 +1420,12 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
           </div>
         </div>
 
+      </div>
+
+      {/* Dialogs are rendered straight into <body>. Inside the form overlay they were positioned against that
+          scrolling overlay instead of the window, so they slid off-screen as the form scrolled. */}
+      {createPortal(
+      <>
         {/* Submit for Approval Confirmation Modal */}
         {submitDialogOpen && (
           <div className="logout-overlay show" style={{ zIndex: 3000 }}>
@@ -1343,7 +1453,12 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         {/* Review & Decide Dialog */}
         {reviewDialogOpen && currentRecord && (
           <div className="logout-overlay show" style={{ zIndex: 3000 }}>
-            <div className="logout-modal review-modal" role="dialog" aria-modal="true">
+            <div
+              className="logout-modal review-modal"
+              role="dialog"
+              aria-modal="true"
+              style={{ width: 'min(1180px, 96vw)', maxWidth: '96vw', height: 'min(94vh, 900px)', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}
+            >
               <div className="logout-icon is-approve">
                 <svg viewBox="0 0 24 24" width="24" height="24" fill="none">
                   <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -1361,6 +1476,28 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
                     `Reject returns it to the requesting office for revision (remarks required). Your decision is recorded under ${user?.roleName || 'Approver'}.`;
                 })()}
               </p>
+
+              <style>{`
+                .review-preview-scroll .excel-preview-sheet { margin: 0; border: 0; box-shadow: none; padding: 10px 16px 16px; }
+                .review-preview-scroll .excel-preview-banner { text-align: left; margin: 0 0 6px; }
+                .review-preview-scroll .excel-preview-banner img { display: block; max-height: 56px; width: auto; max-width: 100%; }
+                .review-preview-scroll .excel-preview-sheet h2 { text-align: left; font-size: 15px; margin: 6px 0; }
+                .review-preview-scroll .excel-preview-checks { justify-content: flex-start; margin: 4px 0 8px; }
+                .review-preview-scroll .excel-preview-meta { display: flex; flex-wrap: wrap; gap: 4px 28px; justify-content: flex-start; text-align: left; margin: 0 0 10px; padding: 8px 12px; }
+                .review-preview-scroll .excel-preview-meta p { margin: 0; }
+              `}</style>
+              {/* The whole PPMP, so the approver can read every item (scrolls both ways) before deciding. */}
+              <div
+                className="review-preview-scroll"
+                style={{
+                  flex: '1 1 0', minHeight: 200, overflow: 'auto', textAlign: 'left',
+                  margin: '4px 0 16px', border: '1px solid var(--db-border, rgba(128,128,128,0.35))', borderRadius: 10
+                }}
+              >
+                <PreviewBoundary key={currentRecord.id}>
+                  <PpmpSheet record={currentRecord} notify={setNotice} onPreviewDoc={setPreviewDoc} />
+                </PreviewBoundary>
+              </div>
 
               <div className={`review-field ${reviewRemarksError ? 'has-error' : ''}`}>
                 <label>Remarks / Notes (required for Reject or Remark):</label>
@@ -1439,7 +1576,9 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
           onClose={() => setPreviewDoc(null)}
           doc={previewDoc}
         />
-      </div>
+      </>,
+      document.body
+      )}
     </div>
   );
 }

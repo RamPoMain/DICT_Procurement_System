@@ -91,6 +91,169 @@ const SIGNATORIES = [
 ];
 
 /**
+ * Keeps a rendering problem inside the preview from blanking the whole page: it shows the error message
+ * in place of the sheet (and logs the details to the browser console) instead.
+ */
+export class PreviewBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('PPMP preview failed to render:', error, info);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div role="alert" style={{ padding: 16, fontSize: 13 }}>
+          The PPMP preview could not be displayed: {String((this.state.error && this.state.error.message) || this.state.error)}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/**
+ * The Excel-style sheet of one PPMP, without any modal around it. Used by the Excel preview popup and by
+ * the approval dialog, so approvers see exactly the same thing. Criteria and Strategies columns show only
+ * while the PPMP is still a Draft.
+ */
+export function PpmpSheet({ record, notify = () => {}, onPreviewDoc }) {
+  const items = getRecordItems(record);
+  const showCS = isPpmpDraft(record);
+  const isIndicative = record.is_indicative === 'Indicative';
+  const isFinal = record.is_indicative === 'Final';
+  const total = formatPesoExact(calculateDeduplicatedBudget(items));
+  const labelSpan = showCS ? 12 : 11;
+
+  // "Column 1..n" row: the hidden Criteria (6) and Strategies (14) columns are skipped in the numbering.
+  let shown = 0;
+  const columnLabels = Array.from({ length: 17 }, (_, i) => {
+    const isCS = i + 1 === 6 || i + 1 === 14;
+    if (isCS && !showCS) return { hidden: true, text: '' };
+    shown += 1;
+    return { hidden: false, text: `Column ${shown}` };
+  });
+
+  return (
+    <div className="excel-preview-sheet">
+      <div className="excel-preview-banner">
+        <img src="/images/header-banner.png" alt="DICT Header Banner" />
+      </div>
+
+      <h2>PROJECT PROCUREMENT MANAGEMENT PLAN (PPMP) NO. {record.ppmp_no || 'N/A'}</h2>
+
+      <div className="excel-preview-checks">
+        <span><span className="excel-check-box">{isIndicative ? 'X' : ''}</span> INDICATIVE</span>
+        <span><span className="excel-check-box">{isFinal ? 'X' : ''}</span> FINAL</span>
+      </div>
+
+      <div className="excel-preview-meta">
+        <p>Fiscal Year : {record.fiscal_year || 'N/A'}</p>
+        <p>End-User or Implementing Unit: {record.end_user || 'N/A'}</p>
+      </div>
+
+      <div className="excel-preview-table-wrap">
+        <table className={`excel-preview-table${showCS ? '' : ' ep-hide-cs'}`}>
+          <thead>
+            <tr>
+              <th colSpan={showCS ? 6 : 5}>PROCUREMENT PROJECT DETAILS</th>
+              <th colSpan={5}>PROJECTED TIMELINE (MM/YYYY)</th>
+              <th colSpan={2}>FUNDING DETAILS</th>
+              <th rowSpan={2} className="ep-cs-col">PROCUREMENT STRATEGIES AND TOOLS</th>
+              <th rowSpan={2}>ATTACHED SUPPORTING DOCUMENTS</th>
+              <th rowSpan={2}>GENERAL REQUIREMENTS/MISCELLANEOUS/COMMON SUPPLIES AND EQUIPMENT</th>
+              <th rowSpan={2}>REMARKS</th>
+            </tr>
+            <tr>
+              <th>General Description and Objective of the Project to be Procured</th>
+              <th>Type of the Project to be Procured</th>
+              <th>Quantity and Size of the Project to be Procured</th>
+              <th>Recommended Mode of Procurement</th>
+              <th>Pre-Procurement Conference (Yes/No)</th>
+              <th className="ep-cs-col">Criteria for Bid Evaluation</th>
+              <th>Advertisement/Posting of IB/REI</th>
+              <th>Submission/Opening of Bids</th>
+              <th>Notice of Award</th>
+              <th>Contract Signing</th>
+              <th>Expected Delivery/ Implementation Period</th>
+              <th>Source of Funds</th>
+              <th>Estimated Budget / Authorized Budgetary Allocation (PhP)</th>
+            </tr>
+            <tr>
+              {columnLabels.map((c, i) => (
+                <th key={i} className={c.hidden ? 'ep-cs-col' : undefined}>{c.text}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, idx) => (
+              <tr key={item.id ?? idx} className="ep-item-row">
+                <td>{item.project_description || ''}</td>
+                <td>{item.project_type || ''}</td>
+                <td>{item.quantity_size || ''}</td>
+                <td>{item.mode || ''}</td>
+                <td>{item.pre_procurement || ''}</td>
+                <td className="ep-cs-col">{showCS ? (item.bid_evaluation_criteria || 'N/A') : ''}</td>
+                <td>{item.start_date || ''}</td>
+                <td>{item.bid_opening_date || ''}</td>
+                <td>{item.notice_of_award_date || ''}</td>
+                <td>{item.end_date || ''}</td>
+                <td>{item.delivery_period || ''}</td>
+                <td>{item.fund_source || ''}</td>
+                <td>{formatPesoExact(parseBudgetNumber(item.budget))}</td>
+                <td className="ep-cs-col" style={{ textAlign: 'center' }}>
+                  {showCS ? <ValueList values={item.strategies} /> : ''}
+                </td>
+                <td>
+                  {!(Array.isArray(item.supporting_documents) && item.supporting_documents.length > 0) && showCS ? (
+                    <span className="ep-none ep-needs-doc" title="Required before this PPMP can be submitted for approval">
+                      Needs document
+                    </span>
+                  ) : (
+                    <DocList item={item} notify={notify} onPreviewDoc={onPreviewDoc} />
+                  )}
+                </td>
+                <td>{item.general_requirements || ''}</td>
+                <td>{item.remarks || ''}</td>
+              </tr>
+            ))}
+            <tr>
+              <td colSpan={labelSpan} className="excel-total-label">TOTAL BUDGET:</td>
+              <td className="excel-total-value">{total}</td>
+              <td className="ep-cs-col" />
+              <td />
+              <td />
+              <td />
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="excel-preview-signatures">
+        {SIGNATORIES.map((s) => (
+          <div key={s.label}>
+            <p>{s.label}</p>
+            <span />
+            <strong>{s.name}</strong>
+            <small>Signature over Printed Name</small>
+            {s.lines.map((l) => <small key={l}>{l}</small>)}
+            {s.date && <small>Date: {new Date().toLocaleDateString()}</small>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Read-only Excel-style preview of one PPMP.
  * Criteria and Strategies columns show only while the PPMP is still a Draft.
  */
@@ -109,22 +272,6 @@ export default function ExcelPreviewModal({ record, onClose, onOpenRequest, noti
   }, [record, onClose]);
 
   if (!record) return null;
-
-  const items = getRecordItems(record);
-  const showCS = isPpmpDraft(record);
-  const isIndicative = record.is_indicative === 'Indicative';
-  const isFinal = record.is_indicative === 'Final';
-  const total = formatPesoExact(calculateDeduplicatedBudget(items));
-  const labelSpan = showCS ? 12 : 11;
-
-  // "Column 1..n" row: the hidden Criteria (6) and Strategies (14) columns are skipped in the numbering.
-  let shown = 0;
-  const columnLabels = Array.from({ length: 17 }, (_, i) => {
-    const isCS = i + 1 === 6 || i + 1 === 14;
-    if (isCS && !showCS) return { hidden: true, text: '' };
-    shown += 1;
-    return { hidden: false, text: `Column ${shown}` };
-  });
 
   const exportExcel = async () => {
     try {
@@ -176,113 +323,7 @@ export default function ExcelPreviewModal({ record, onClose, onOpenRequest, noti
         </div>
 
         <div className="excel-preview-scroll">
-          <div className="excel-preview-sheet">
-            <div className="excel-preview-banner">
-              <img src="/images/header-banner.png" alt="DICT Header Banner" />
-            </div>
-
-            <h2>PROJECT PROCUREMENT MANAGEMENT PLAN (PPMP) NO. {record.ppmp_no || 'N/A'}</h2>
-
-            <div className="excel-preview-checks">
-              <span><span className="excel-check-box">{isIndicative ? 'X' : ''}</span> INDICATIVE</span>
-              <span><span className="excel-check-box">{isFinal ? 'X' : ''}</span> FINAL</span>
-            </div>
-
-            <div className="excel-preview-meta">
-              <p>Fiscal Year : {record.fiscal_year || 'N/A'}</p>
-              <p>End-User or Implementing Unit: {record.end_user || 'N/A'}</p>
-            </div>
-
-            <div className="excel-preview-table-wrap">
-              <table className={`excel-preview-table${showCS ? '' : ' ep-hide-cs'}`}>
-                <thead>
-                  <tr>
-                    <th colSpan={showCS ? 6 : 5}>PROCUREMENT PROJECT DETAILS</th>
-                    <th colSpan={5}>PROJECTED TIMELINE (MM/YYYY)</th>
-                    <th colSpan={2}>FUNDING DETAILS</th>
-                    <th rowSpan={2} className="ep-cs-col">PROCUREMENT STRATEGIES AND TOOLS</th>
-                    <th rowSpan={2}>ATTACHED SUPPORTING DOCUMENTS</th>
-                    <th rowSpan={2}>GENERAL REQUIREMENTS/MISCELLANEOUS/COMMON SUPPLIES AND EQUIPMENT</th>
-                    <th rowSpan={2}>REMARKS</th>
-                  </tr>
-                  <tr>
-                    <th>General Description and Objective of the Project to be Procured</th>
-                    <th>Type of the Project to be Procured</th>
-                    <th>Quantity and Size of the Project to be Procured</th>
-                    <th>Recommended Mode of Procurement</th>
-                    <th>Pre-Procurement Conference (Yes/No)</th>
-                    <th className="ep-cs-col">Criteria for Bid Evaluation</th>
-                    <th>Advertisement/Posting of IB/REI</th>
-                    <th>Submission/Opening of Bids</th>
-                    <th>Notice of Award</th>
-                    <th>Contract Signing</th>
-                    <th>Expected Delivery/ Implementation Period</th>
-                    <th>Source of Funds</th>
-                    <th>Estimated Budget / Authorized Budgetary Allocation (PhP)</th>
-                  </tr>
-                  <tr>
-                    {columnLabels.map((c, i) => (
-                      <th key={i} className={c.hidden ? 'ep-cs-col' : undefined}>{c.text}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item, idx) => (
-                    <tr key={item.id ?? idx} className="ep-item-row">
-                      <td>{item.project_description || ''}</td>
-                      <td>{item.project_type || ''}</td>
-                      <td>{item.quantity_size || ''}</td>
-                      <td>{item.mode || ''}</td>
-                      <td>{item.pre_procurement || ''}</td>
-                      <td className="ep-cs-col">{showCS ? (item.bid_evaluation_criteria || 'N/A') : ''}</td>
-                      <td>{item.start_date || ''}</td>
-                      <td>{item.bid_opening_date || ''}</td>
-                      <td>{item.notice_of_award_date || ''}</td>
-                      <td>{item.end_date || ''}</td>
-                      <td>{item.delivery_period || ''}</td>
-                      <td>{item.fund_source || ''}</td>
-                      <td>{formatPesoExact(parseBudgetNumber(item.budget))}</td>
-                      <td className="ep-cs-col" style={{ textAlign: 'center' }}>
-                        {showCS ? <ValueList values={item.strategies} /> : ''}
-                      </td>
-                      <td>
-                        {!(Array.isArray(item.supporting_documents) && item.supporting_documents.length > 0) && showCS ? (
-                          <span className="ep-none ep-needs-doc" title="Required before this PPMP can be submitted for approval">
-                            Needs document
-                          </span>
-                        ) : (
-                          <DocList item={item} notify={notify} onPreviewDoc={setPreviewDoc} />
-                        )}
-                      </td>
-                      <td>{item.general_requirements || ''}</td>
-                      <td>{item.remarks || ''}</td>
-                    </tr>
-                  ))}
-                  <tr>
-                    <td colSpan={labelSpan} className="excel-total-label">TOTAL BUDGET:</td>
-                    <td className="excel-total-value">{total}</td>
-                    <td className="ep-cs-col" />
-                    <td />
-                    <td />
-                    <td />
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <div className="excel-preview-signatures">
-              {SIGNATORIES.map((s) => (
-                <div key={s.label}>
-                  <p>{s.label}</p>
-                  <span />
-                  <strong>{s.name}</strong>
-                  <small>Signature over Printed Name</small>
-                  {s.lines.map((l) => <small key={l}>{l}</small>)}
-                  {s.date && <small>Date: {new Date().toLocaleDateString()}</small>}
-                </div>
-              ))}
-            </div>
-          </div>
+          <PpmpSheet record={record} notify={notify} onPreviewDoc={setPreviewDoc} />
         </div>
       </div>
 
