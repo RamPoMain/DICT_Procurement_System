@@ -96,7 +96,7 @@ export const ACCOUNTS = [
     email: 'supply@dict.gov.ph',
     password: '1',
     role: 'SUP',
-    roleName: 'Suppliers',
+    roleName: 'Supply',
     canRequest: false,
     canApprove: false,
     canTrackApprovals: true

@@ -1479,10 +1479,10 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
 
               <style>{`
                 .review-preview-scroll .excel-preview-sheet { margin: 0; border: 0; box-shadow: none; padding: 10px 16px 16px; }
-                .review-preview-scroll .excel-preview-banner { text-align: left; margin: 0 0 6px; }
-                .review-preview-scroll .excel-preview-banner img { display: block; max-height: 56px; width: auto; max-width: 100%; }
-                .review-preview-scroll .excel-preview-sheet h2 { text-align: left; font-size: 15px; margin: 6px 0; }
-                .review-preview-scroll .excel-preview-checks { justify-content: flex-start; margin: 4px 0 8px; }
+                .review-preview-scroll .excel-preview-banner { text-align: center; margin: 0 0 6px; }
+                .review-preview-scroll .excel-preview-banner img { display: block; max-height: 56px; width: auto; max-width: 100%; margin: 0 auto; }
+                .review-preview-scroll .excel-preview-sheet h2 { text-align: center; font-size: 15px; margin: 6px 0; }
+                .review-preview-scroll .excel-preview-checks { justify-content: center; margin: 4px 0 8px; }
                 .review-preview-scroll .excel-preview-meta { display: flex; flex-wrap: wrap; gap: 4px 28px; justify-content: flex-start; text-align: left; margin: 0 0 10px; padding: 8px 12px; }
                 .review-preview-scroll .excel-preview-meta p { margin: 0; }
               `}</style>
