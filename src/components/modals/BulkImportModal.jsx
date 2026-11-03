@@ -19,6 +19,13 @@ function readRecords() {
   }
 }
 
+// Only this year and next year can be picked for a new PPMP.
+function pickAllowedYear(preferred) {
+  const thisYear = new Date().getFullYear();
+  const y = Number(preferred);
+  return String(y === thisYear || y === thisYear + 1 ? y : thisYear);
+}
+
 export default function BulkImportModal({ isOpen, onClose, headerData, recordId, onSuccess }) {
   const { user } = useAuth();
   const [downloading, setDownloading] = useState(false);
@@ -27,7 +34,7 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
   const [selectedFile, setSelectedFile] = useState(null);
   const [reviewResult, setReviewResult] = useState(null); // { fatal, ready, problems, total }
   const [ppmpType, setPpmpType] = useState(headerData?.is_indicative || 'Indicative');
-  const [fiscalYear, setFiscalYear] = useState(headerData?.fiscal_year || new Date().getFullYear().toString());
+  const [fiscalYear, setFiscalYear] = useState(pickAllowedYear(headerData?.fiscal_year));
   const [errorToast, setErrorToast] = useState('');
   const fileInputRef = useRef(null);
 
@@ -43,7 +50,7 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
     setErrorToast('');
     setParsing(false);
     setPpmpType(headerData?.is_indicative || 'Indicative');
-    setFiscalYear(String(headerData?.fiscal_year || new Date().getFullYear()));
+    setFiscalYear(pickAllowedYear(headerData?.fiscal_year));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
@@ -70,11 +77,11 @@ export default function BulkImportModal({ isOpen, onClose, headerData, recordId,
     [isOpen, isAddingToExisting, headerData?.ppmp_no, currentOffice, fiscalYear]
   );
 
-  // Fiscal years a new PPMP can be planned for: last, this and next year.
-  const yearOptions = useMemo(() => {
-    const set = new Set([thisYear - 1, thisYear, thisYear + 1, Number(fiscalYear)].filter(Boolean));
-    return [...set].sort((a, b) => a - b).map(String);
-  }, [thisYear, fiscalYear]);
+  // Fiscal years a new PPMP can be planned for: this year and next year only.
+  const yearOptions = useMemo(
+    () => [String(thisYear), String(thisYear + 1)],
+    [thisYear]
+  );
 
   const yearIsClosed = !isAddingToExisting && isOpen && isAppFinal(fiscalYear);
 

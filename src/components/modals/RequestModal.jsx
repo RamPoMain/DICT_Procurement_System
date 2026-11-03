@@ -24,7 +24,8 @@ import {
   buildMissingDocsMessage,
   buildBudgetMismatchMessage,
   submitPpmpForApproval,
-  performPpmpReviewAction
+  performPpmpReviewAction,
+  isAppFinal
 } from '../../utils/procurementRules.js';
 import { generatePPMP_PDF } from '../../utils/pdfGenerator.js';
 import FileStore from '../../utils/fileStore.js';
@@ -49,18 +50,26 @@ const MAX_TOTAL_SIZE = 50 * 1024 * 1024;  // 50MB total per item
 const formatFileSize = (b) => b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
 const STEP_PROGRESS = [15, 45, 85];
 
+// A new PPMP can only be planned for this year or next year. Default to the first one
+// whose APP is not yet final (falls back to this year, where the closed-year message shows).
+function pickDefaultFiscalYear() {
+  const thisYear = new Date().getFullYear();
+  const open = [thisYear, thisYear + 1].find((y) => !isAppFinal(String(y)));
+  return String(open ?? thisYear);
+}
+
 export default function RequestModal({ isOpen, onClose, recordId = null, onSaved, onBulkImport }) {
   const { user } = useAuth();
   const [step, setStep] = useState(1);
   const [isViewMode, setIsViewMode] = useState(false);
   const [itemIdx, setItemIdx] = useState(0);
 
-  const [headerData, setHeaderData] = useState({
+  const [headerData, setHeaderData] = useState(() => ({
     ppmp_no: '',
-    fiscal_year: new Date().getFullYear().toString(),
+    fiscal_year: pickDefaultFiscalYear(),
     end_user: user?.office || '',
     is_indicative: 'Indicative'
-  });
+  }));
 
   const [items, setItems] = useState([]);
   const [activeItem, setActiveItem] = useState(createBlankItem());
@@ -150,9 +159,10 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
       setItems([fresh]);
       setItemIdx(0);
       setActiveItem(fresh);
+      const defaultFy = pickDefaultFiscalYear();
       setHeaderData({
-        ppmp_no: nextPpmpNo(new Date().getFullYear().toString()),
-        fiscal_year: new Date().getFullYear().toString(),
+        ppmp_no: nextPpmpNo(defaultFy),
+        fiscal_year: defaultFy,
         end_user: user?.office || '',
         is_indicative: 'Indicative'
       });
@@ -203,9 +213,29 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
 
   if (!isOpen) return null;
 
+  // Fiscal year choices: this year and next year only. When editing an existing PPMP, its own
+  // year stays in the list so the field never shows a value that is not an option.
+  const thisYear = new Date().getFullYear();
+  const yearOptions = [...new Set([
+    thisYear,
+    thisYear + 1,
+    ...(recordId && currentRecord?.fiscal_year ? [Number(currentRecord.fiscal_year)] : [])
+  ])].sort((a, b) => a - b).map(String);
+
+  // Closed = that year's APP is already final. A PPMP that already lives in that year can keep it;
+  // a new PPMP (or an existing one being moved into it) cannot.
+  const fiscalYearIsClosed =
+    !!headerData.fiscal_year &&
+    isAppFinal(String(headerData.fiscal_year)) &&
+    (!recordId || String(headerData.fiscal_year) !== String(currentRecord?.fiscal_year));
+
+  const closedYearMessage = `The APP for FY ${headerData.fiscal_year} is already final, so a new PPMP cannot be created under it. Choose another fiscal year.`;
+
   const validateCurrentStep = () => {
     const errs = {};
     if (step === 1) {
+      if (!yearOptions.includes(String(headerData.fiscal_year))) errs.fiscal_year = 'Select a fiscal year.';
+      else if (fiscalYearIsClosed) errs.fiscal_year = closedYearMessage;
       if (!activeItem.project_description) errs.project_description = 'Description is required';
       if (!activeItem.object_name || !/^\d+$/.test(activeItem.object_name)) errs.object_name = 'Object Code must be numbers only';
       if (!activeItem.project_type) errs.project_type = 'Select a Project Type';
@@ -270,6 +300,11 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   };
 
   const handleSave = () => {
+    if (fiscalYearIsClosed) {
+      setStep(1);
+      setErrors({ fiscal_year: closedYearMessage });
+      return;
+    }
     if (!validateCurrentStep()) return;
     let records = JSON.parse(localStorage.getItem('procurement_records')) || [];
     const updatedItems = [...items];
@@ -732,20 +767,21 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
                 <input type="text" value={headerData.end_user} readOnly />
               </div>
 
-              <div className="field-group">
+              <div className={`field-group ${(errors.fiscal_year || fiscalYearIsClosed) ? 'error-state' : ''}`}>
                 <label>Fiscal Year</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={4}
-                  placeholder={`e.g. ${new Date().getFullYear()}`}
+                <select
                   value={headerData.fiscal_year}
                   disabled={isViewMode}
                   onChange={e => {
-                    const fy = e.target.value.replace(/\D/g, '');
+                    const fy = e.target.value;
                     setHeaderData({ ...headerData, fiscal_year: fy, ...(recordId ? {} : { ppmp_no: nextPpmpNo(fy) }) });
+                    clearError('fiscal_year');
                   }}
-                />
+                >
+                  {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+                {!isViewMode && fiscalYearIsClosed && <p className="text-45">{closedYearMessage}</p>}
+                {!isViewMode && !fiscalYearIsClosed && errors.fiscal_year && <p className="text-45">{errors.fiscal_year}</p>}
               </div>
 
               <div className={`field-group ${errors.project_type ? 'error-state' : ''}`}>

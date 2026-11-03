@@ -12,7 +12,8 @@ import {
   getAllAppRecords,
   getAppRecord,
   getLatestApprovedPpmpPerOffice,
-  getRecordItems
+  getRecordItems,
+  pruneOrphanAppRecords
 } from '../utils/procurementRules';
 import {
   readRecords,
@@ -71,6 +72,8 @@ export default function Dashboard() {
 
   const loadData = useCallback(() => {
     if (!user) return;
+    // Clear any saved APP whose approved PPMPs are gone (also heals data left over from before this check existed)
+    pruneOrphanAppRecords();
     const all = readRecords();
     setRecords(getVisibleRecords(all, user));
 
@@ -124,11 +127,20 @@ export default function Dashboard() {
   };
 
   const confirmDelete = () => {
-    const all = readRecords().filter((r) => r.id !== pendingDeleteId);
+    const before = readRecords();
+    const target = before.find((r) => r.id === pendingDeleteId);
+    const all = before.filter((r) => r.id !== pendingDeleteId);
     localStorage.setItem('procurement_records', JSON.stringify(all));
     setPendingDeleteId(null);
+
+    // Deleting the last approved PPMP of a year also resets that year's APP, so FY stays consistent.
+    const resetYears = target?.status === 'Completed' ? pruneOrphanAppRecords() : [];
     loadData();
-    showToast('Request deleted successfully.');
+    showToast(
+      resetYears.length
+        ? `Request deleted. The APP for FY ${resetYears.join(', ')} was reset because no approved PPMPs remain.`
+        : 'Request deleted successfully.'
+    );
   };
 
   // ---- Stats ----

@@ -376,6 +376,39 @@ export function isAppFinal(year) {
   return getAppRecord(year).status === 'Completed';
 }
 
+// An APP only exists because approved PPMPs back it. When the last approved PPMP of a fiscal
+// year is deleted, a saved APP that is Final / under review for that year is stale (it would
+// still say "Final" with a Download PDF button but have nothing to compile), so drop it.
+// Draft APPs are left alone. Returns the fiscal years that were reset.
+export function pruneOrphanAppRecords() {
+  let records = [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem('procurement_records'));
+    records = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    records = [];
+  }
+  const backedYears = new Set(
+    records
+      .filter((r) => r && r.status === 'Completed')
+      .map((r) => String(r.fiscal_year).trim())
+  );
+
+  const apps = getAllAppRecords();
+  const removedYears = [];
+  const kept = apps.filter((a) => {
+    const year = String(a.fiscal_year).trim();
+    const orphan = a.status && a.status !== 'Draft' && !backedYears.has(year);
+    if (orphan) removedYears.push(year);
+    return !orphan;
+  });
+
+  if (removedYears.length) {
+    localStorage.setItem('app_records', JSON.stringify(kept));
+  }
+  return removedYears;
+}
+
 export function getLatestApprovedPpmpPerOffice(records, fiscalYear) {
   const latestByOffice = new Map();
   const yStr = fiscalYear != null ? String(fiscalYear).trim() : null;
