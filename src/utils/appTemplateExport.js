@@ -8,7 +8,12 @@
 // rule as the PDF (appSectionOf in pdfGenerator.js).
 
 import ExcelJS from 'exceljs';
-import { getAppRecord, getLatestApprovedPpmpPerOffice, getRecordItems } from './procurementRules.js';
+import {
+  getAppRecord,
+  getLatestApprovedPpmpPerOffice,
+  getRecordItems,
+  calculateDeduplicatedBudget
+} from './procurementRules.js';
 import { appSectionOf, APP_SECTION_TITLES } from './pdfGenerator.js';
 
 // Accounts that may export (session.role). Add 'ARD', 'RD' to share it.
@@ -441,7 +446,6 @@ export async function buildAppLayoutWorkbook(ExcelJSLib, items, opts) {
   r = head2 + 1;
 
   // Sections, in the PDF's order. An empty section keeps one blank row like the PDF.
-  const firstDataRow = r;
   ['general', 'misc', 'cse'].forEach((key) => {
     ws.mergeCells(r, 1, r, LAYOUT_COLS);
     const title = ws.getCell(r, 1);
@@ -473,15 +477,11 @@ export async function buildAppLayoutWorkbook(ExcelJSLib, items, opts) {
       r += 1;
     });
   });
-  const lastDataRow = r - 1;
-
   ws.mergeCells(r, 1, r, BUDGET_COL - 1);
   ws.getCell(r, 1).value = 'TOTAL BUDGET:';
   const totalCell = ws.getCell(r, BUDGET_COL);
-  totalCell.value = {
-    formula: `SUM(${ws.getColumn(BUDGET_COL).letter}${firstDataRow}:${ws.getColumn(BUDGET_COL).letter}${lastDataRow})`,
-    result: items.reduce((s, it) => s + parseBudget(it.budget), 0)
-  };
+  // The row amounts remain visible, but repeated reference numbers count once in the APP total.
+  totalCell.value = calculateDeduplicatedBudget(items);
   totalCell.numFmt = PESO_FMT;
   for (let c = 1; c <= LAYOUT_COLS; c += 1) {
     const cell = ws.getCell(r, c);

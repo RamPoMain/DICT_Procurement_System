@@ -3,7 +3,8 @@ import autoTable from 'jspdf-autotable';
 import {
   getLatestApprovedPpmpPerOffice,
   getRecordItems,
-  getAppRecord
+  getAppRecord,
+  calculateDeduplicatedBudget
 } from './procurementRules.js';
 
 // ---------------------------------------------------------------
@@ -394,7 +395,7 @@ export async function buildAPP_PDF(targetYear = null) {
   }];
   const section = (title, list) => [sectionHeader(title), ...(list.length ? list.map(formatAppRow) : [emptyRow()])];
 
-  const totalBudget = appItems.reduce((sum, it) => sum + parseBudget(it.budget), 0);
+  const totalBudget = calculateDeduplicatedBudget(appItems);
 
   const body = [
     ...section(APP_SECTION_TITLES.general, generalItems),

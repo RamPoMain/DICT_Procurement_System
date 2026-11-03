@@ -767,7 +767,7 @@ export default function PpmpExpanded({
 
   const active = !editing && isItemFilterActive(eff);   // editing always shows every item
   const visible = active ? items.filter((it) => itemMatchesFilter(it, eff, showCS)) : items;
-  const subtotal = visible.reduce((s, it) => s + parseBudgetNumber(it.budget), 0);
+  const subtotal = calculateDeduplicatedBudget(visible);
   const total = formatPesoExact(calculateDeduplicatedBudget(items));
   const extraCols = editing ? 1 : 0;
   // Criteria and Strategies are Draft-only columns and disappear once the PPMP is submitted, so every

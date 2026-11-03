@@ -5,7 +5,8 @@ import {
   saveAppRecord,
   getLatestApprovedPpmpPerOffice,
   getRecordItems,
-  parseBudgetNumber
+  parseBudgetNumber,
+  calculateDeduplicatedBudget
 } from '../../utils/procurementRules.js';
 import { previewAPP_PDF, generateAPP_PDF, formatMonthYear } from '../../utils/pdfGenerator.js';
 import { exportStandardAppExcel, exportPhilGepsAppExcel } from '../../utils/appTemplateExport.js';
@@ -72,7 +73,7 @@ export default function AppPreviewModal({ isOpen, onClose, fiscalYear, onUpdated
     }
   });
 
-  const totalCalculatedBudget = allItems.reduce((s, it) => s + parseBudgetNumber(it.budget), 0);
+  const totalCalculatedBudget = calculateDeduplicatedBudget(allItems);
   const isFinal = appRecord.status === 'Completed';
 
   const handleAction = (action) => {
