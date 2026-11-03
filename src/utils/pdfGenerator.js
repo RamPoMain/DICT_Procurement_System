@@ -474,3 +474,25 @@ export async function previewAPP_PDF(year = null) {
   if (!built) return null;
   return { blob: built.doc.output('blob'), fiscalYear: built.fiscalYear, fileName: built.fileName };
 }
+
+export function formatMonthYear(dateVal) {
+  if (!dateVal) return '';
+  const str = String(dateVal).trim();
+  if (/^[A-Za-z]{3}-\d{2}$/i.test(str)) return str;
+  const m = str.match(/^(\d{4})-(\d{1,2})/);
+  if (m) {
+    const year = m[1].slice(-2);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthIdx = parseInt(m[2], 10) - 1;
+    if (monthIdx >= 0 && monthIdx < 12) {
+      return `${months[monthIdx]}-${year}`;
+    }
+  }
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const yy = String(d.getFullYear()).slice(-2);
+    return `${months[d.getMonth()]}-${yy}`;
+  }
+  return str;
+}

@@ -535,3 +535,7 @@ export async function exportAppExcel(targetYear, { session = null, notify = (m) 
     notify('The APP could not be exported to Excel.');
   }
 }
+
+// Aliases for compatibility across components
+export const exportPhilGepsAppExcel = exportAppTemplateExcel;
+export const exportStandardAppExcel = exportAppExcel;
