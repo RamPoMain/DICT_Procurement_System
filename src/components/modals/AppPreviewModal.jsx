@@ -220,11 +220,7 @@ export default function AppPreviewModal({ isOpen, onClose, fiscalYear, onUpdated
                     <h4>Republic of the Philippines</h4>
                     <h3>DEPARTMENT OF INFORMATION AND COMMUNICATIONS TECHNOLOGY</h3>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <div style={{ textAlign: 'right' }}>
-                      <span style={{ fontSize: 11, fontWeight: 800, color: '#1e3a8a', display: 'block' }}>BAGONG PILIPINAS</span>
-                    </div>
-                  </div>
+                  <div style={{ width: 60 }} aria-hidden="true" />
                 </div>
 
                 <div className="app-sheet-title">
