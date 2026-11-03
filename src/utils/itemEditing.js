@@ -13,7 +13,9 @@ import {
   budgetBracketMessage,
   isPpmpDraft,
   claimEntryRef,
-  findExistingReferenceInfo
+  findExistingReferenceInfo,
+  updatePriorFailedBiddingRemarks,
+  tagFailedAttempts
 } from './procurementRules.js';
 
 // ------------------------------------------------------------
@@ -290,13 +292,19 @@ export function saveRecordItems(recordId, items) {
   const pool = all.map((r, i) => (i === idx ? { ...r, items: next } : r));
 
   next.forEach((item) => {
-    if (item.reference_no) return;
     const info = findExistingReferenceInfo(
       item.project_description, item.project_type, original, original.end_user
     );
-    if (info) {
-      item.reference_no = info.reference_no;
-      if (info.competitiveCount >= 2) item.mode = 'Negotiated Procurement';
+    if (info && info.reference_no) {
+      if (!item.reference_no) item.reference_no = info.reference_no;
+      if (info.competitiveCount >= 2) {
+        item.mode = FAILED_BIDDING_MODE;
+        item.bid_evaluation_criteria = 'Negotiated';
+        const autoRemark = '[Negotiated Procurement – Two Failed Biddings (RA 12009 Sec. 33)]';
+        if (!String(item.remarks || '').toLowerCase().includes('two failed biddings')) {
+          item.remarks = item.remarks ? `${item.remarks.trim()} ${autoRemark}` : autoRemark;
+        }
+      }
     }
     if (!item.reference_no) {
       item.reference_no = claimEntryRef(pool, item.project_type, original.fiscal_year);
@@ -304,6 +312,15 @@ export function saveRecordItems(recordId, items) {
   });
 
   all[idx] = { ...original, items: next };
+
+  next.forEach((it) => {
+    if (it.reference_no) {
+      all = updatePriorFailedBiddingRemarks(all, it.reference_no);
+    }
+    if (isFailedBiddingItem(it)) {
+      all = tagFailedAttempts(all, it.project_description, original.end_user);
+    }
+  });
   try {
     localStorage.setItem('procurement_records', JSON.stringify(all));
   } catch {

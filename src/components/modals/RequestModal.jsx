@@ -28,9 +28,13 @@ import {
   isAppFinal,
   getNewRequestTarget,
   newRequestBlockedMessage as blockedMessage,
-  carryOverItems
+  carryOverItems,
+  updatePriorFailedBiddingRemarks,
+  calculateDeduplicatedBudget,
+  formatPesoExact
 } from '../../utils/procurementRules.js';
 import { generatePPMP_PDF } from '../../utils/pdfGenerator.js';
+import { exportPPMP_Excel } from '../../utils/entriesExport.js';
 import FileStore from '../../utils/fileStore.js';
 import { getNextPpmpNumber } from '../../utils/ppmpNumber.js';
 import {
@@ -78,6 +82,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   const [activeItem, setActiveItem] = useState(createBlankItem());
   const [errors, setErrors] = useState({});
   const [failedBiddingWarning, setFailedBiddingWarning] = useState('');
+  const [failedBiddingInfo, setFailedBiddingInfo] = useState('');
   const [stratOpen, setStratOpen] = useState(false);
   const [recordStatus, setRecordStatus] = useState('Draft');
   const [currentRecord, setCurrentRecord] = useState(null);
@@ -134,6 +139,8 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     setReviewRemarks('');
     setReviewRemarksError(false);
     setRecordStatus('Draft');
+    setFailedBiddingWarning('');
+    setFailedBiddingInfo('');
 
     if (recordId) {
       const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
@@ -173,27 +180,48 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     }
   }, [isOpen, recordId]);
 
-  // Live detection of Two Failed Biddings under RA 12009 Sec. 33
-  // (re-runs when Edit is pressed, and ignores the record being edited)
+  // Live detection of Two Failed Biddings under RA 12009 Sec. 33 and linking of re-bids
   useEffect(() => {
-    if (isViewMode) { setFailedBiddingWarning(''); return; }
-    const desc = activeItem.project_description.trim();
+    if (isViewMode) {
+      setFailedBiddingWarning('');
+      setFailedBiddingInfo('');
+      return;
+    }
+    const desc = activeItem.project_description?.trim();
     if (!desc) {
       setFailedBiddingWarning('');
+      setFailedBiddingInfo('');
       return;
     }
     const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
     const currentRec = recordId ? all.find(r => r.id === recordId) : null;
     const refInfo = findExistingReferenceInfo(desc, activeItem.project_type, currentRec, user?.office);
+
     if (refInfo && refInfo.competitiveCount >= 2) {
       setActiveItem(prev => ({
         ...prev,
         mode: 'Negotiated Procurement – Two Failed Biddings',
         bid_evaluation_criteria: 'Negotiated'
       }));
-      setFailedBiddingWarning(`Matches ${refInfo.reference_no || 'prior attempts'}: 2 failed biddings detected. Mode is locked to Negotiated Procurement – Two Failed Biddings (Sec. 33).`);
+      setFailedBiddingWarning(`Matches ${refInfo.reference_no || 'prior attempts'}: 2 failed biddings detected. Mode is locked to Negotiated Procurement – Two Failed Biddings.`);
+      setFailedBiddingInfo('');
+    } else if (refInfo && refInfo.reference_no) {
+      setFailedBiddingWarning('');
+      const attemptNum = (refInfo.competitiveCount || 0) + 1;
+      setFailedBiddingInfo(`Linked to existing reference: ${refInfo.reference_no} (Attempt #${attemptNum})`);
+      setActiveItem(prev => {
+        if (prev.mode?.includes('Two Failed Biddings')) {
+          return {
+            ...prev,
+            mode: '',
+            bid_evaluation_criteria: prev.bid_evaluation_criteria === 'Negotiated' ? '' : prev.bid_evaluation_criteria
+          };
+        }
+        return prev;
+      });
     } else {
       setFailedBiddingWarning('');
+      setFailedBiddingInfo('');
       setActiveItem(prev => {
         if (prev.mode?.includes('Two Failed Biddings')) {
           return {
@@ -311,6 +339,52 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     if (validateCurrentStep()) setStep(s => s + 1);
   };
 
+  const switchItem = (targetIdx) => {
+    if (targetIdx < 0 || targetIdx >= items.length || targetIdx === itemIdx) return;
+    const updated = [...items];
+    updated[itemIdx] = { ...activeItem };
+    setItems(updated);
+    setItemIdx(targetIdx);
+    setActiveItem(updated[targetIdx]);
+    setStep(1);
+    setErrors({});
+  };
+
+  const switchItemView = (targetIdx) => {
+    if (targetIdx < 0 || targetIdx >= items.length || targetIdx === itemIdx) return;
+    setItemIdx(targetIdx);
+    setActiveItem(items[targetIdx]);
+    setStep(1);
+  };
+
+  const handleAddNewItem = () => {
+    const updated = [...items];
+    updated[itemIdx] = { ...activeItem };
+    const fresh = createBlankItem();
+    updated.push(fresh);
+    setItems(updated);
+    setItemIdx(updated.length - 1);
+    setActiveItem(fresh);
+    setStep(1);
+    setErrors({});
+    setNotice(`Item ${updated.length} of ${updated.length} added.`);
+  };
+
+  const handleDeleteItemInForm = () => {
+    if (items.length <= 1) {
+      setConfirmDelete(true);
+      return;
+    }
+    const remaining = items.filter((_, i) => i !== itemIdx);
+    const nextIdx = Math.min(itemIdx, remaining.length - 1);
+    setItems(remaining);
+    setItemIdx(nextIdx);
+    setActiveItem(remaining[nextIdx]);
+    setStep(1);
+    setErrors({});
+    setNotice('Item removed from PPMP.');
+  };
+
   const handleSave = () => {
     if (fiscalYearIsClosed) {
       setStep(1);
@@ -322,18 +396,31 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     const updatedItems = [...items];
     const finalItem = { ...activeItem };
 
-    const isTwoFailed = finalItem.mode?.includes('Two Failed Biddings');
-    const refInfo = isTwoFailed
-      ? findExistingReferenceInfo(finalItem.project_description, finalItem.project_type, recordId ? records.find(r => r.id === recordId) : null, user?.office)
-      : null;
+    const currentRec = recordId ? records.find(r => r.id === recordId) : null;
+    const refInfo = findExistingReferenceInfo(
+      finalItem.project_description,
+      finalItem.project_type,
+      currentRec,
+      user?.office
+    );
 
-    if (!finalItem.reference_no) {
-      if (refInfo?.reference_no) {
-        finalItem.reference_no = refInfo.reference_no;
-      } else {
-        finalItem.reference_no = claimEntryRef(records, finalItem.project_type, headerData.fiscal_year);
+    const isTwoFailed = finalItem.mode?.includes('Two Failed Biddings') || (refInfo && refInfo.competitiveCount >= 2);
+
+    if (refInfo?.reference_no) {
+      finalItem.reference_no = refInfo.reference_no;
+    } else if (!finalItem.reference_no) {
+      finalItem.reference_no = claimEntryRef(records, finalItem.project_type, headerData.fiscal_year);
+    }
+
+    if (isTwoFailed) {
+      finalItem.mode = 'Negotiated Procurement – Two Failed Biddings';
+      finalItem.bid_evaluation_criteria = 'Negotiated';
+      const autoRemark = '[Negotiated Procurement – Two Failed Biddings (RA 12009 Sec. 33)]';
+      if (!String(finalItem.remarks || '').toLowerCase().includes('two failed biddings')) {
+        finalItem.remarks = finalItem.remarks ? `${finalItem.remarks.trim()} ${autoRemark}` : autoRemark;
       }
     }
+
     updatedItems[itemIdx] = finalItem;
 
     if (recordId) {
@@ -380,6 +467,10 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
       }
     }
 
+    // Always update prior failed bidding remarks and tags if this is a re-bid
+    if (finalItem.reference_no) {
+      records = updatePriorFailedBiddingRemarks(records, finalItem.reference_no);
+    }
     if (isTwoFailed) {
       records = tagFailedAttempts(records, finalItem.project_description, user?.office);
     }
@@ -653,12 +744,104 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
           )}
         </div>
 
-        {/* Multi-Item Navigator */}
-        {items.length > 1 && isViewMode && (
-          <div className="modal-item-nav">
-            <button type="button" className="modal-item-nav-btn" disabled={itemIdx === 0} onClick={() => { setItemIdx(i => i - 1); setActiveItem(items[itemIdx - 1]); }}>&larr;</button>
-            <span>Item {itemIdx + 1} of {items.length}</span>
-            <button type="button" className="modal-item-nav-btn" disabled={itemIdx === items.length - 1} onClick={() => { setItemIdx(i => i + 1); setActiveItem(items[itemIdx + 1]); }}>&rarr;</button>
+        {/* Multi-Item Navigator & Item Actions */}
+        {(items.length > 1 || !isViewMode) && (
+          <div className="modal-item-nav-container" style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            background: 'var(--db-card-bg, #1a2234)',
+            border: '1px solid var(--db-border, rgba(255, 255, 255, 0.08))',
+            borderRadius: 8,
+            padding: '8px 14px',
+            marginBottom: 16
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <button
+                type="button"
+                className="modal-item-nav-btn"
+                disabled={itemIdx === 0}
+                onClick={() => isViewMode ? switchItemView(itemIdx - 1) : switchItem(itemIdx - 1)}
+                title="Previous Item"
+              >
+                &larr;
+              </button>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--db-text, #E7EAF3)' }}>
+                Item {itemIdx + 1} of {items.length}
+              </span>
+              <button
+                type="button"
+                className="modal-item-nav-btn"
+                disabled={itemIdx === items.length - 1}
+                onClick={() => isViewMode ? switchItemView(itemIdx + 1) : switchItem(itemIdx + 1)}
+                title="Next Item"
+              >
+                &rarr;
+              </button>
+              {activeItem?.origin_id && (
+                <span style={{
+                  fontSize: 11,
+                  padding: '2px 8px',
+                  borderRadius: 4,
+                  background: 'rgba(59, 130, 246, 0.15)',
+                  color: 'var(--db-accent, #3b82f6)',
+                  fontWeight: 600
+                }}>
+                  Carried Over
+                </span>
+              )}
+              {activeItem?.reference_no && (
+                <span style={{ fontSize: 11, color: 'var(--db-text-dim, #8B94A8)', fontFamily: 'monospace' }}>
+                  Ref: {activeItem.reference_no}
+                </span>
+              )}
+              <span style={{ fontSize: 12, color: 'var(--db-text-dim, #8B94A8)', marginLeft: 6 }}>
+                PPMP Total: <strong style={{ color: 'var(--db-text, #E7EAF3)' }}>{formatPesoExact(calculateDeduplicatedBudget(items))}</strong>
+              </span>
+            </div>
+
+            {!isViewMode && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={handleAddNewItem}
+                  style={{
+                    background: 'rgba(59, 130, 246, 0.15)',
+                    border: '1px solid rgba(59, 130, 246, 0.3)',
+                    color: 'var(--db-accent, #3b82f6)',
+                    borderRadius: 6,
+                    padding: '5px 10px',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4
+                  }}
+                >
+                  + Add Item
+                </button>
+                {items.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={handleDeleteItemInForm}
+                    style={{
+                      background: 'rgba(239, 68, 68, 0.12)',
+                      border: '1px solid rgba(239, 68, 68, 0.25)',
+                      color: '#ef4444',
+                      borderRadius: 6,
+                      padding: '5px 10px',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                    title="Remove this item from request"
+                  >
+                    Delete Item
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -771,8 +954,40 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
         </div>
 
         {failedBiddingWarning && (
-          <div style={{ padding: '8px 12px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: 8, marginBottom: 14, fontSize: 12 }}>
-            {failedBiddingWarning}
+          <div style={{
+            padding: '10px 14px',
+            background: 'rgba(239, 68, 68, 0.12)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            color: '#ef4444',
+            borderRadius: 8,
+            marginBottom: 14,
+            fontSize: 12.5,
+            fontWeight: 500,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8
+          }}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <span>{failedBiddingWarning}</span>
+          </div>
+        )}
+
+        {failedBiddingInfo && !failedBiddingWarning && (
+          <div style={{
+            padding: '10px 14px',
+            background: 'rgba(59, 130, 246, 0.1)',
+            border: '1px solid rgba(59, 130, 246, 0.25)',
+            color: 'var(--db-accent, #3b82f6)',
+            borderRadius: 8,
+            marginBottom: 14,
+            fontSize: 12.5,
+            fontWeight: 500,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8
+          }}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            <span>{failedBiddingInfo}</span>
           </div>
         )}
 
@@ -1114,7 +1329,25 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
 
           <div className="footer-right-actions">
             {isViewMode && recordId && (
-              <button type="button" className="export-app-btn" onClick={exportPpmp}>Export PPMP</button>
+              <>
+                <button type="button" className="export-app-btn" onClick={exportPpmp}>Export PDF</button>
+                <button
+                  type="button"
+                  className="export-app-btn"
+                  style={{
+                    background: 'rgba(16, 185, 129, 0.15)',
+                    borderColor: 'rgba(16, 185, 129, 0.4)',
+                    color: 'var(--db-green, #10b981)'
+                  }}
+                  onClick={() => {
+                    const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
+                    const rec = all.find(r => r.id === recordId);
+                    if (rec) exportPPMP_Excel(rec, setNotice);
+                  }}
+                >
+                  Export Excel
+                </button>
+              </>
             )}
 
             {canAct && (

@@ -275,60 +275,178 @@ export function normalizeDescription(description) {
 export function findExistingReferenceInfo(description, projectType, currentRecord, office) {
   const normDesc = normalizeDescription(description);
   const offNorm = String(office || '').trim().toLowerCase();
-  if (!normDesc || !offNorm) return null;
+  if (!normDesc) return null;
 
   const allRecords = JSON.parse(localStorage.getItem('procurement_records')) || [];
   let matchedRefNo = null;
   let competitiveCount = 0;
+  const matchingItems = [];
   const seenAttemptKeys = new Set();
 
   const checkItem = (it) => {
     if (!it) return;
     const itNormDesc = normalizeDescription(it.project_description);
     if (itNormDesc !== normDesc) return;
-    if (it.reference_no && !matchedRefNo) matchedRefNo = it.reference_no;
 
-    const attemptKey = String(it.origin_id || it.id || it.reference_no || '');
-    if (attemptKey && seenAttemptKeys.has(attemptKey)) return;
+    if (it.reference_no && !matchedRefNo) {
+      matchedRefNo = it.reference_no;
+    }
+
+    // DEDUPLICATION: An attempt is uniquely identified by its origin_id (or id).
+    // Carried-over copies share the same origin_id and are skipped so they aren't counted twice.
+    const attemptKey = String(it.origin_id || it.id);
+    if (attemptKey && seenAttemptKeys.has(attemptKey)) {
+      return;
+    }
     if (attemptKey) seenAttemptKeys.add(attemptKey);
 
+    matchingItems.push(it);
+
     const isCompetitive = String(it.mode || '').trim().toLowerCase().includes('competitive bidding');
-    if (isCompetitive) competitiveCount++;
+    if (isCompetitive) {
+      competitiveCount++;
+    }
   };
 
-  if (currentRecord) getRecordItems(currentRecord).forEach(checkItem);
+  // 1. Check items in current record being edited
+  if (currentRecord) {
+    getRecordItems(currentRecord).forEach(checkItem);
+  }
 
-  allRecords
-    .filter(r => (!currentRecord || r.id !== currentRecord.id) && String(r.end_user || '').trim().toLowerCase() === offNorm)
-    .forEach(r => getRecordItems(r).forEach(checkItem));
+  // 2. Filter other records belonging to the same office
+  const officeRecords = allRecords.filter(r => {
+    if (!r || (currentRecord && r.id === currentRecord.id)) return false;
+    if (offNorm && String(r.end_user || '').trim().toLowerCase() !== offNorm) return false;
+    return true;
+  });
 
-  if (competitiveCount < 2 && !matchedRefNo) return null;
-  return { reference_no: matchedRefNo, competitiveCount };
+  // Group approved records by fiscal year to inspect only the latest approved PPMP of each year
+  const approvedByYear = new Map();
+  officeRecords.filter(r => r.status === 'Completed').forEach(r => {
+    const y = String(r.fiscal_year || '').trim();
+    const existing = approvedByYear.get(y);
+    if (!existing || (Number(r.approved_at || r.id) > Number(existing.approved_at || existing.id))) {
+      approvedByYear.set(y, r);
+    }
+  });
+
+  approvedByYear.forEach(r => {
+    getRecordItems(r).forEach(checkItem);
+  });
+
+  // Also check draft records
+  officeRecords.filter(r => r.status !== 'Completed').forEach(r => {
+    getRecordItems(r).forEach(checkItem);
+  });
+
+  if (!matchedRefNo && competitiveCount === 0) return null;
+
+  return {
+    reference_no: matchedRefNo,
+    competitiveCount,
+    totalEntries: matchingItems.length
+  };
+}
+
+export function updatePriorFailedBiddingRemarks(records, targetRefNo) {
+  if (!records || !targetRefNo) return records;
+  const isArrayOfRecords = Array.isArray(records) && records[0] && (records[0].items || records[0].ppmp_no);
+
+  const allCompetitive = [];
+  if (isArrayOfRecords) {
+    records.forEach(r => {
+      getRecordItems(r).forEach(it => {
+        if (it && it.reference_no === targetRefNo && String(it.mode || '').toLowerCase().includes('competitive bidding')) {
+          allCompetitive.push(it);
+        }
+      });
+    });
+  } else if (Array.isArray(records)) {
+    records.forEach(it => {
+      if (it && it.reference_no === targetRefNo && String(it.mode || '').toLowerCase().includes('competitive bidding')) {
+        allCompetitive.push(it);
+      }
+    });
+  }
+
+  if (allCompetitive.length >= 1) {
+    const it1 = allCompetitive[0];
+    const s1 = String(it1.remarks || '');
+    if (!s1.toLowerCase().includes('1st failure')) {
+      it1.remarks = s1.trim() ? `${s1.trim()} [1st Failure]` : '[1st Failure]';
+    }
+  }
+  if (allCompetitive.length >= 2) {
+    const it2 = allCompetitive[1];
+    const s2 = String(it2.remarks || '');
+    if (!s2.toLowerCase().includes('2nd failure')) {
+      it2.remarks = s2.trim() ? `${s2.trim()} [2nd Failure]` : '[2nd Failure]';
+    }
+  }
+  return records;
 }
 
 export function tagFailedAttempts(records, description, office) {
   const normDesc = normalizeDescription(description);
   const offNorm = String(office || '').trim().toLowerCase();
-  if (!normDesc || !offNorm) return records;
+  if (!normDesc) return records;
 
   let failureCount = 0;
   return (records || []).map(r => {
-    if (String(r.end_user || '').trim().toLowerCase() !== offNorm) return r;
+    if (offNorm && String(r.end_user || '').trim().toLowerCase() !== offNorm) return r;
     const updatedItems = getRecordItems(r).map(it => {
       const itDesc = normalizeDescription(it.project_description);
       if (itDesc === normDesc && String(it.mode || '').toLowerCase().includes('competitive bidding')) {
         failureCount++;
         const tag = failureCount === 1 ? '[1st Failure]' : '[2nd Failure]';
-        const raw = String(it.project_description || '').replace(/^\[(?:1st|2nd|3rd)\s+Failure\]\s*/i, '').trim();
-        if (!String(it.project_description || '').startsWith(tag)) {
-          return { ...it, project_description: `${tag} ${raw}` };
+        const str = String(it.remarks || '');
+        let newRemarks = str;
+        if (!str.toLowerCase().includes(tag.toLowerCase())) {
+          newRemarks = str.trim() ? `${str.trim()} ${tag}` : tag;
         }
+        return { ...it, remarks: newRemarks };
       }
       return it;
     });
     return { ...r, items: updatedItems };
   });
 }
+
+export function getLatestApprovedPpmpForOffice(office, fiscalYear) {
+  if (!office || !fiscalYear) return null;
+  const year = String(fiscalYear).trim();
+  const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
+  const offNorm = String(office).trim().toLowerCase();
+
+  const approved = all.filter(r =>
+    r && r.status === 'Completed' &&
+    String(r.end_user || '').trim().toLowerCase() === offNorm &&
+    String(r.fiscal_year || '').trim() === year
+  );
+
+  if (approved.length === 0) return null;
+
+  approved.sort((a, b) => {
+    const numA = parseInt(a.ppmp_no, 10) || 0;
+    const numB = parseInt(b.ppmp_no, 10) || 0;
+    if (numB !== numA) return numB - numA;
+    return (Number(b.approved_at) || Number(b.id) || 0) - (Number(a.approved_at) || Number(a.id) || 0);
+  });
+
+  return approved[0];
+}
+
+export function clonePpmpItemsForCarryOver(sourceRecord, newBaseTimestamp = Date.now()) {
+  if (!sourceRecord) return [];
+  const items = getRecordItems(sourceRecord);
+  return items.map((item, idx) => {
+    const cloned = JSON.parse(JSON.stringify(item));
+    cloned.origin_id = item.origin_id || item.id;
+    cloned.id = newBaseTimestamp + idx + 1;
+    return cloned;
+  });
+}
+
 
 // APP Storage & Helpers
 export function getAllAppRecords() {
