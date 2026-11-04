@@ -128,7 +128,23 @@ export function appSectionOf(it) {
 // ---------------------------------------------------------------
 // PPMP PDF
 // ---------------------------------------------------------------
-export async function generatePPMP_PDF(record) {
+// Printed names default to the current office signers. When a PPMP is routed through DTMS, pass the
+// real routed people so the names on the page match who actually signs.
+// signers = { preparedBy, endorsedBy, certifiedBy } where each is { name, role } (both optional).
+const DEFAULT_PPMP_SIGNERS = {
+  preparedBy: { name: 'JAYMARK D. DUMIO', role: 'Focal, ICT Literacy Competency and Development Bureau X' },
+  endorsedBy: { name: 'EUGENE C. RAPOSALA III', role: 'Chief, Technical Operations Division' },
+  certifiedBy: { name: 'BRYAN JOHN M. SABLAS', role: 'Budget Officer II' }
+};
+
+export async function buildPPMP_PDF(record, signers = {}) {
+  // An empty or missing override keeps the default, so a blank position never prints as "undefined".
+  const merge = (base, over) => ({ name: over?.name || base.name, role: over?.role || base.role });
+  const sg = {
+    preparedBy: merge(DEFAULT_PPMP_SIGNERS.preparedBy, signers.preparedBy),
+    endorsedBy: merge(DEFAULT_PPMP_SIGNERS.endorsedBy, signers.endorsedBy),
+    certifiedBy: merge(DEFAULT_PPMP_SIGNERS.certifiedBy, signers.certifiedBy)
+  };
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const items = getRecordItems(record);
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -267,37 +283,51 @@ export async function generatePPMP_PDF(record) {
   drawSignatory(doc, {
     labelX: MARGIN, lineFrom: MARGIN, lineTo: MARGIN + 60, centerX: MARGIN + 30, y: finalY,
     label: 'Prepared by / Submitted by:',
-    name: 'JAYMARK D. DUMIO',
-    role: 'Focal, ICT Literacy Competency and Development Bureau X',
+    name: sg.preparedBy.name,
+    role: sg.preparedBy.role,
     extras: [['Date: ' + new Date().toLocaleDateString(), 30]]
   });
   drawSignatory(doc, {
     labelX: pageWidth / 2 - 30, lineFrom: pageWidth / 2 - 35, lineTo: pageWidth / 2 + 25, centerX: pageWidth / 2 - 5, y: finalY,
     label: 'Endorsed by:',
-    name: 'EUGENE C. RAPOSALA III',
-    role: 'Chief, Technical Operations Division'
+    name: sg.endorsedBy.name,
+    role: sg.endorsedBy.role
   });
   drawSignatory(doc, {
     labelX: pageWidth - 70, lineFrom: pageWidth - 70, lineTo: pageWidth - MARGIN, centerX: pageWidth - 35, y: finalY,
     label: 'Certified Funds Available:',
-    name: 'BRYAN JOHN M. SABLAS',
-    role: 'Budget Officer II',
+    name: sg.certifiedBy.name,
+    role: sg.certifiedBy.role,
     extras: approved ? [['Approved in system by ' + record.approved_by.name + approvedOn, 26]] : []
   });
   drawSignatory(doc, {
     labelX: MARGIN, lineFrom: MARGIN, lineTo: MARGIN + 60, centerX: MARGIN + 30, y: finalY + 45,
     label: 'Endorsed by:',
-    name: 'EUGENE C. RAPOSALA III',
-    role: 'Chief, Technical Operations Division'
+    name: sg.endorsedBy.name,
+    role: sg.endorsedBy.role
   });
 
-  doc.save(`PPMP_${record.ppmp_no}_${String(record.end_user).replace(/[^\w-]+/g, '_')}.pdf`);
+  return { doc, fileName: `PPMP_${record.ppmp_no}_${String(record.end_user).replace(/[^\w-]+/g, '_')}.pdf` };
+}
+
+// Same behaviour as before: build and download.
+export async function generatePPMP_PDF(record, signers = {}) {
+  const { doc, fileName } = await buildPPMP_PDF(record, signers);
+  doc.save(fileName);
+}
+
+// For sending to DTMS: returns { blob, fileName } instead of downloading.
+export async function previewPPMP_PDF(record, signers = {}) {
+  const { doc, fileName } = await buildPPMP_PDF(record, signers);
+  return { blob: doc.output('blob'), fileName };
 }
 
 // ---------------------------------------------------------------
 // APP PDF (GPPB format)
 // ---------------------------------------------------------------
-export async function buildAPP_PDF(targetYear = null) {
+// signers = { preparedBy, endorsedBy, approvedBy }, each { name } (optional). Used when the APP is sent to
+// DTMS, because appRecord.ard_approved_by / approved_by are empty until those people have signed.
+export async function buildAPP_PDF(targetYear = null, signers = {}) {
   const records = JSON.parse(localStorage.getItem('procurement_records')) || [];
   const approved = records.filter((r) => r.status === 'Completed');
 
@@ -433,7 +463,10 @@ export async function buildAPP_PDF(targetYear = null) {
   }
   doc.setFontSize(7);
 
-  const nameOf = (person, fallback) => (person?.name ? person.name.toUpperCase() : fallback);
+  const nameOf = (person, fallback, override) => {
+    const n = override?.name || person?.name;
+    return n ? n.toUpperCase() : fallback;
+  };
   const dateOf = (ts) => (ts ? new Date(Number(ts)).toLocaleDateString() : '');
 
   const prepDate = dateOf(appRecord.submitted_at) || new Date().toLocaleDateString();
@@ -443,21 +476,21 @@ export async function buildAPP_PDF(targetYear = null) {
   drawSignatory(doc, {
     labelX: MARGIN, lineFrom: MARGIN, lineTo: MARGIN + 60, centerX: MARGIN + 30, y: finalY,
     label: 'Prepared by / Submitted by:',
-    name: nameOf(appRecord.submitted_by, 'SUPPLY OFFICER II'),
+    name: nameOf(appRecord.submitted_by, 'SUPPLY OFFICER II', signers.preparedBy),
     role: 'Supply Officer II / BAC Secretariat',
     extras: [['Date: ' + prepDate, 28]]
   });
   drawSignatory(doc, {
     labelX: pageWidth / 2 - 30, lineFrom: pageWidth / 2 - 35, lineTo: pageWidth / 2 + 25, centerX: pageWidth / 2 - 5, y: finalY,
     label: 'Endorsed by:',
-    name: nameOf(appRecord.ard_approved_by, 'ASSISTANT REGIONAL DIRECTOR'),
+    name: nameOf(appRecord.ard_approved_by, 'ASSISTANT REGIONAL DIRECTOR', signers.endorsedBy),
     role: 'Assistant Regional Director / BAC Chairperson',
     extras: ardDate ? [['Date: ' + ardDate, 28]] : []
   });
   drawSignatory(doc, {
     labelX: pageWidth - 70, lineFrom: pageWidth - 70, lineTo: pageWidth - MARGIN, centerX: pageWidth - 35, y: finalY,
     label: 'Approved by:',
-    name: nameOf(appRecord.approved_by, 'REGIONAL DIRECTOR'),
+    name: nameOf(appRecord.approved_by, 'REGIONAL DIRECTOR', signers.approvedBy),
     role: 'Regional Director / Head of the Procuring Entity',
     extras: rdDate ? [['Date: ' + rdDate, 28]] : []
   });
@@ -465,13 +498,13 @@ export async function buildAPP_PDF(targetYear = null) {
   return { doc, fiscalYear, fileName: `APP_FY_${fiscalYear}_DICT.pdf` };
 }
 
-export async function generateAPP_PDF(year = null) {
-  const built = await buildAPP_PDF(year);
+export async function generateAPP_PDF(year = null, signers = {}) {
+  const built = await buildAPP_PDF(year, signers);
   if (built) built.doc.save(built.fileName);
 }
 
-export async function previewAPP_PDF(year = null) {
-  const built = await buildAPP_PDF(year);
+export async function previewAPP_PDF(year = null, signers = {}) {
+  const built = await buildAPP_PDF(year, signers);
   if (!built) return null;
   return { blob: built.doc.output('blob'), fiscalYear: built.fiscalYear, fileName: built.fileName };
 }

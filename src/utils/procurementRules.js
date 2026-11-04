@@ -619,9 +619,15 @@ export function carryOverItems(previous, idStart = Date.now() + 1) {
   }));
 }
 
+// A record sent to DTMS is approved there; the in-app Review buttons must not appear for it.
+export function isRoutedToDtms(record) {
+  return !!record?.dtms?.tracknumber && getPpmpStatus(record) === 'For Approval';
+}
+
 export function canSessionActOnRecord(record, session) {
   if (!session || !session.canApprove || !record) return false;
   if (getPpmpStatus(record) !== 'For Approval') return false;
+  if (isRoutedToDtms(record)) return false;
   if (record.currentApproverRole !== session.stage) return false;
   if (session.stage === 'HEAD') return record.end_user === session.headOf;
   return true;
@@ -752,6 +758,9 @@ export function performPpmpReviewAction(recordId, action, remarksText, session) 
   const record = all[idx];
   if (getPpmpStatus(record) !== 'For Approval') {
     return { success: false, error: 'This PPMP must be submitted for approval before it can be reviewed.' };
+  }
+  if (isRoutedToDtms(record)) {
+    return { success: false, error: 'This PPMP is being signed in DTMS, so it cannot be approved here.' };
   }
   if (!canSessionActOnRecord(record, session)) {
     return { success: false, error: 'This PPMP is not waiting for your approval.' };

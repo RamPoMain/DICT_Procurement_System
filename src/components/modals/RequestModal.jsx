@@ -45,6 +45,12 @@ import {
 } from '../../utils/procurementOptions.js';
 import FilePreviewModal from './FilePreviewModal.jsx';
 import { PpmpSheet, PreviewBoundary } from './ExcelPreviewModal.jsx';
+import {
+  DTMS_ENABLED,
+  submitPpmpViaDtms,
+  downloadDtmsSignedPdf,
+  syncDtmsApprovals
+} from '../../utils/dtmsApproval.js';
 
 // BID_CRITERIA_OPTIONS, STRATEGY_OPTIONS, GENERAL_REQ_OPTIONS and EXPENSE_CLASS_OPTIONS now live in
 // utils/procurementOptions.js so the form and the Excel import always agree.
@@ -95,6 +101,7 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   const [reviewRemarks, setReviewRemarks] = useState('');
   const [reviewRemarksError, setReviewRemarksError] = useState(false);
   const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [previewDoc, setPreviewDoc] = useState(null);
@@ -249,6 +256,23 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     const t = setTimeout(() => setNotice(''), 3000);
     return () => clearTimeout(t);
   }, [notice]);
+
+  // A PPMP being signed in DTMS: bring in anything that happened since it was last opened.
+  useEffect(() => {
+    if (!isOpen || !currentRecord?.dtms?.tracknumber || currentRecord.status !== 'For Approval') return undefined;
+    let cancelled = false;
+    syncDtmsApprovals().then((changed) => {
+      if (!changed || cancelled) return;
+      const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
+      const rec = all.find((r) => r.id === currentRecord.id);
+      if (rec) {
+        setCurrentRecord(rec);
+        setRecordStatus(rec.status || 'Draft');
+      }
+      if (onSaved) onSaved();
+    });
+    return () => { cancelled = true; };
+  }, [isOpen, currentRecord?.id]);
 
   if (!isOpen) return null;
 
@@ -674,9 +698,17 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
     setSubmitDialogOpen(true);
   };
 
-  const handleConfirmSubmit = () => {
-    if (!currentRecord) return;
-    const res = submitPpmpForApproval(currentRecord.id, user);
+  const handleConfirmSubmit = async () => {
+    if (!currentRecord || submitting) return;
+    setSubmitting(true);
+    let res;
+    try {
+      res = DTMS_ENABLED
+        ? await submitPpmpViaDtms(currentRecord.id, user)
+        : submitPpmpForApproval(currentRecord.id, user);
+    } finally {
+      setSubmitting(false);
+    }
     setSubmitDialogOpen(false);
     if (!res.success) {
       setNotice(res.error);
@@ -734,7 +766,9 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
   const exportPpmp = () => {
     const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
     const rec = all.find(r => r.id === recordId);
-    if (rec) generatePPMP_PDF(rec);
+    if (!rec) return;
+    if (rec.status === 'Completed' && rec.dtms?.tracknumber) downloadDtmsSignedPdf(rec.dtms.tracknumber, setNotice);
+    else generatePPMP_PDF(rec);
   };
 
   const docLabel = PROJECT_TYPE_DOC_LABELS[activeItem.project_type];
@@ -967,6 +1001,11 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
             }} />
             <strong>Currently with:</strong>
             <span>{getApprovalStep(currentRecord.currentApproverRole)?.label || currentRecord.currentApproverRole}</span>
+            {currentRecord.dtms?.tracknumber && (
+              <span style={{ marginLeft: 'auto', fontSize: 11.5, opacity: 0.75 }}>
+                Signing in DTMS · No. {currentRecord.dtms.tracknumber}
+              </span>
+            )}
           </div>
         )}
 
@@ -1437,14 +1476,18 @@ export default function RequestModal({ isOpen, onClose, recordId = null, onSaved
               </div>
               <h3>Submit PPMP No. {currentRecord?.ppmp_no || headerData.ppmp_no} for approval?</h3>
               <p>
-                {user?.stage === 'HEAD'
-                  ? 'Its status will change from Draft to For Approval and it goes straight to the TOD. '
-                  : 'Its status will change from Draft to For Approval and it goes to your Unit Head. '}
+                {DTMS_ENABLED
+                  ? `Its status will change from Draft to For Approval and it is sent to DTMS for signing, starting with ${user?.stage === 'HEAD' ? 'the TOD' : 'your Unit Head'}. `
+                  : user?.stage === 'HEAD'
+                    ? 'Its status will change from Draft to For Approval and it goes straight to the TOD. '
+                    : 'Its status will change from Draft to For Approval and it goes to your Unit Head. '}
                 While it is under review it can no longer be edited or get new items.
               </p>
               <div className="logout-actions">
-                <button type="button" className="logout-cancel-btn" onClick={() => setSubmitDialogOpen(false)}>Cancel</button>
-                <button type="button" className="logout-confirm-btn is-approve" onClick={handleConfirmSubmit}>Submit</button>
+                <button type="button" className="logout-cancel-btn" disabled={submitting} onClick={() => setSubmitDialogOpen(false)}>Cancel</button>
+                <button type="button" className="logout-confirm-btn is-approve" disabled={submitting} onClick={handleConfirmSubmit}>
+                  {submitting ? 'Sending\u2026' : 'Submit'}
+                </button>
               </div>
             </div>
           </div>
