@@ -566,6 +566,29 @@ export function findLatestPpmp(records, office, fiscalYear) {
   return best;
 }
 
+// Keep the latest approved PPMP available as the source for the next version.
+// A newer draft may still be deleted, so it does not replace this carryover source.
+export function isLatestApprovedCarryoverSource(record, records) {
+  if (!record || getPpmpStatus(record) !== 'Completed') return false;
+
+  const office = String(record.end_user || '').trim().toLowerCase();
+  const year = String(record.fiscal_year || '').trim();
+  let latest = null;
+  (records || []).forEach((r) => {
+    if (!r || getPpmpStatus(r) !== 'Completed') return;
+    if (String(r.end_user || '').trim().toLowerCase() !== office) return;
+    if (String(r.fiscal_year || '').trim() !== year) return;
+
+    const number = parseInt(r.ppmp_no, 10) || 0;
+    const latestNumber = latest ? (parseInt(latest.ppmp_no, 10) || 0) : -1;
+    if (!latest || number > latestNumber || (number === latestNumber && Number(r.id) > Number(latest.id))) {
+      latest = r;
+    }
+  });
+
+  return String(latest?.id) === String(record.id);
+}
+
 // What "New Request" / bulk import does for an office + fiscal year, based on its latest PPMP:
 //   no PPMP yet            -> 'new'          create PPMP No. 1
 //   latest is a Draft      -> 'append'       add the entries to that Draft (no new PPMP)

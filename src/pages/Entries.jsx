@@ -16,7 +16,8 @@ import {
   getItemsBudgetModeMismatch,
   buildMissingDocsMessage,
   buildBudgetMismatchMessage,
-  submitPpmpForApproval
+  submitPpmpForApproval,
+  isLatestApprovedCarryoverSource
 } from '../utils/procurementRules.js';
 import {
   readRecords,
@@ -212,6 +213,9 @@ export default function Entries() {
   };
 
   const requestDelete = (record) => {
+    if (isLatestApprovedCarryoverSource(record, readRecords())) {
+      return setToast(`PPMP No. ${record.ppmp_no} for FY ${record.fiscal_year} is the latest approved plan and must remain available for carryover.`);
+    }
     if (!canDeleteRecord(record, user)) {
       return setToast('An approved PPMP is closed and can only be deleted by an approver.');
     }
@@ -234,7 +238,11 @@ export default function Entries() {
       return;
     }
     if (kind === 'delete') {
-      setToast(deleteRecordById(record.id) ? 'Request deleted.' : 'Could not delete the request.');
+      if (isLatestApprovedCarryoverSource(record, readRecords())) {
+        setToast(`PPMP No. ${record.ppmp_no} for FY ${record.fiscal_year} is the latest approved plan and must remain available for carryover.`);
+      } else {
+        setToast(deleteRecordById(record.id) ? 'Request deleted.' : 'Could not delete the request.');
+      }
       setExpandedId(null);
     } else {
       const res = submitPpmpForApproval(record.id, user);

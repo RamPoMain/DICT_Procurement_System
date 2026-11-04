@@ -13,7 +13,8 @@ import {
   getAppRecord,
   getLatestApprovedPpmpPerOffice,
   getRecordItems,
-  pruneOrphanAppRecords
+  pruneOrphanAppRecords,
+  isLatestApprovedCarryoverSource
 } from '../utils/procurementRules';
 import {
   readRecords,
@@ -26,6 +27,7 @@ import {
   getAppBadge,
   isAppPendingForUser
 } from '../utils/dashboardHelpers';
+import { deleteRecordById } from '../utils/entriesHelpers.js';
 import { generateAPP_PDF } from '../utils/pdfGenerator';
 import { exportStandardAppExcel, exportPhilGepsAppExcel, exportAppTemplateExcel, EXPORT_ROLES } from '../utils/appTemplateExport';
 
@@ -119,6 +121,10 @@ export default function Dashboard() {
 
   // ---- Delete (with confirmation) ----
   const requestDelete = (record) => {
+    if (isLatestApprovedCarryoverSource(record, readRecords())) {
+      showToast(`PPMP No. ${record.ppmp_no} for FY ${record.fiscal_year} is the latest approved plan and must remain available for carryover.`);
+      return;
+    }
     if (!canDeleteRecord(record, user)) {
       showToast('An approved PPMP is closed and can only be deleted by an approver.');
       return;
@@ -129,9 +135,17 @@ export default function Dashboard() {
   const confirmDelete = () => {
     const before = readRecords();
     const target = before.find((r) => r.id === pendingDeleteId);
-    const all = before.filter((r) => r.id !== pendingDeleteId);
-    localStorage.setItem('procurement_records', JSON.stringify(all));
     setPendingDeleteId(null);
+    if (!target || isLatestApprovedCarryoverSource(target, before)) {
+      showToast(target
+        ? `PPMP No. ${target.ppmp_no} for FY ${target.fiscal_year} is the latest approved plan and must remain available for carryover.`
+        : 'Could not find the request to delete.');
+      return;
+    }
+    if (!deleteRecordById(pendingDeleteId)) {
+      showToast('Could not delete the request.');
+      return;
+    }
 
     // Deleting the last approved PPMP of a year also resets that year's APP, so FY stays consistent.
     const resetYears = target?.status === 'Completed' ? pruneOrphanAppRecords() : [];

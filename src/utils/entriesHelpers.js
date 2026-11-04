@@ -9,7 +9,8 @@ import {
   calculateDeduplicatedBudget,
   itemHasSupportingDocument,
   getAppRecord,
-  isAppFinal
+  isAppFinal,
+  isLatestApprovedCarryoverSource
 } from './procurementRules.js';
 
 export const GENERAL_REQUIREMENT_OPTIONS = [
@@ -190,6 +191,8 @@ export { isPpmpDraft };
 export function deleteRecordById(id) {
   try {
     const all = JSON.parse(localStorage.getItem('procurement_records')) || [];
+    const target = all.find((r) => r.id == id);
+    if (!target || isLatestApprovedCarryoverSource(target, all)) return false;
     localStorage.setItem('procurement_records', JSON.stringify(all.filter((r) => r.id != id)));
     return true;
   } catch {
