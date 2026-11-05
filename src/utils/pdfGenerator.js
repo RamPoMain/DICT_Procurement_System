@@ -128,7 +128,7 @@ export function appSectionOf(it) {
 // ---------------------------------------------------------------
 // PPMP PDF
 // ---------------------------------------------------------------
-export async function generatePPMP_PDF(record) {
+async function buildPPMP_Doc(record) {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const items = getRecordItems(record);
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -291,6 +291,15 @@ export async function generatePPMP_PDF(record) {
     role: 'Chief, Technical Operations Division'
   });
 
+  return doc;
+}
+
+export async function buildPPMP_PDF_Blob(record) {
+  return (await buildPPMP_Doc(record)).output('blob');
+}
+
+export async function generatePPMP_PDF(record) {
+  const doc = await buildPPMP_Doc(record);
   doc.save(`PPMP_${record.ppmp_no}_${String(record.end_user).replace(/[^\w-]+/g, '_')}.pdf`);
 }
 

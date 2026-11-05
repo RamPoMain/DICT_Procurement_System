@@ -41,6 +41,7 @@ import {
 import { exportPPMP_Excel } from '../utils/entriesExport';
 import ExportMenu from '../components/entries/ExportMenu.jsx';
 import { generatePPMP_PDF } from '../utils/pdfGenerator.js';
+import { syncAllWithDtms } from '../utils/dtmsClient.js';
 import "../assets/styles/ppmp-inline-edit.css";
 
 const STAGE_LABELS = { HEAD: 'Unit Head', TOD: 'TOD', BO: 'Budget Officer', RD: 'Regional Director' };
@@ -150,6 +151,18 @@ export default function Entries() {
   }, [user]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // DTMS: pull approval results (approved / rejected) into the records.
+  useEffect(() => {
+    let alive = true;
+    const run = async () => {
+      if (dirtyRef.current) return; // don't reload while a row is being edited
+      try { if (await syncAllWithDtms() && alive) loadData(); } catch (e) { /* retry next tick */ }
+    };
+    run();
+    const t = setInterval(run, 45000);
+    return () => { alive = false; clearInterval(t); };
+  }, [loadData]);
 
   useEffect(() => {
     if (!toast) return undefined;

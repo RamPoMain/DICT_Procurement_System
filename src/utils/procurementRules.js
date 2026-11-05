@@ -622,6 +622,7 @@ export function carryOverItems(previous, idStart = Date.now() + 1) {
 export function canSessionActOnRecord(record, session) {
   if (!session || !session.canApprove || !record) return false;
   if (getPpmpStatus(record) !== 'For Approval') return false;
+  if (record.dtms_track) return false; // approval happens in DTMS
   if (record.currentApproverRole !== session.stage) return false;
   if (session.stage === 'HEAD') return record.end_user === session.headOf;
   return true;
